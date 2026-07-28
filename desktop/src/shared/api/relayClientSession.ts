@@ -536,7 +536,9 @@ export class RelayClient {
     );
 
     const generation = ++this.connectionGeneration;
+    let pendingInbound: unknown[] | null = [];
     this.onMessageChannel = new Channel<unknown>((message) => {
+      if (pendingInbound) return void pendingInbound.push(message);
       void this.handleWsMessage(message, generation).catch((error) => {
         if (generation !== this.connectionGeneration) return;
         this.resetConnection(
@@ -560,7 +562,7 @@ export class RelayClient {
       }
       this.wsId = wsId;
 
-      await new Promise<void>((resolve, reject) => {
+      const authentication = new Promise<void>((resolve, reject) => {
         const timeout = window.setTimeout(() => {
           const error = new Error("Relay authentication timed out.");
           this.authRequest = null;
@@ -576,6 +578,11 @@ export class RelayClient {
         };
       });
 
+      while (pendingInbound.length > 0) {
+        await this.handleWsMessage(pendingInbound.shift(), generation);
+      }
+      pendingInbound = null;
+      await authentication;
       this.stabilityTimer = window.setTimeout(() => {
         this.stabilityTimer = null;
         this.reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
