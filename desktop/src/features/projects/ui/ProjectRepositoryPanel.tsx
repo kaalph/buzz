@@ -26,7 +26,11 @@ import type {
   ProjectRepoFile,
   ProjectRepoSnapshot,
 } from "@/features/projects/hooks";
-import { relativeTime } from "@/features/projects/lib/projectsViewHelpers";
+import {
+  nextRepositoryEntryLimit,
+  relativeTime,
+  REPOSITORY_ENTRY_PAGE_SIZE,
+} from "@/features/projects/lib/projectsViewHelpers";
 import { useUserSearchQuery } from "@/features/profile/hooks";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { UserSearchResult } from "@/shared/api/types";
@@ -633,11 +637,18 @@ export function RepositoryFilesPanel({
   const [currentPath, setCurrentPath] = React.useState("");
   const [selectedFile, setSelectedFile] =
     React.useState<ProjectRepoFile | null>(null);
+  const [visibleEntryCount, setVisibleEntryCount] = React.useState(
+    REPOSITORY_ENTRY_PAGE_SIZE,
+  );
+  const openPath = React.useCallback((path: string) => {
+    setCurrentPath(path);
+    setVisibleEntryCount(REPOSITORY_ENTRY_PAGE_SIZE);
+  }, []);
   const entries = React.useMemo(
     () => repositoryEntries(files, currentPath),
     [currentPath, files],
   );
-  const visibleEntries = entries.slice(0, 200);
+  const visibleEntries = entries.slice(0, visibleEntryCount);
   const latestCommit = snapshot?.latestCommit ?? null;
   const knownLatestCommitProfile = React.useMemo(
     () => profileForCommitAuthor(latestCommit, profiles),
@@ -679,6 +690,7 @@ export function RepositoryFilesPanel({
     if (!filesKey) return;
     setCurrentPath("");
     setSelectedFile(null);
+    setVisibleEntryCount(REPOSITORY_ENTRY_PAGE_SIZE);
   }, [filesKey]);
 
   // Loading/error/empty states keep the header controls visible — the
@@ -737,7 +749,7 @@ export function RepositoryFilesPanel({
         file={selectedFile}
         onOpenPath={(path) => {
           setSelectedFile(null);
-          setCurrentPath(path);
+          openPath(path);
         }}
       />
     );
@@ -766,14 +778,14 @@ export function RepositoryFilesPanel({
             />
           </>
         ) : (
-          <BreadcrumbButton onClick={() => setCurrentPath("")}>
+          <BreadcrumbButton onClick={() => openPath("")}>
             Files
           </BreadcrumbButton>
         )}
         {sourceControls && pathSegments.length > 0 ? (
           <>
             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-            <BreadcrumbButton onClick={() => setCurrentPath("")}>
+            <BreadcrumbButton onClick={() => openPath("")}>
               Files
             </BreadcrumbButton>
           </>
@@ -783,7 +795,7 @@ export function RepositoryFilesPanel({
           return (
             <React.Fragment key={nextPath}>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-              <BreadcrumbButton onClick={() => setCurrentPath(nextPath)}>
+              <BreadcrumbButton onClick={() => openPath(nextPath)}>
                 {segment}
               </BreadcrumbButton>
             </React.Fragment>
@@ -855,7 +867,7 @@ export function RepositoryFilesPanel({
               const latestCommit = entry.latestCommit;
               const rowIsLast = index === visibleEntries.length - 1;
               const openEntry = () =>
-                openRepositoryEntry(entry, setCurrentPath, setSelectedFile);
+                openRepositoryEntry(entry, openPath, setSelectedFile);
 
               return (
                 <tr
@@ -904,11 +916,27 @@ export function RepositoryFilesPanel({
           </tbody>
         </table>
       </div>
-      {entries.length > 200 ? (
-        <p className="border-border/50 border-t px-4 py-3 text-2xs text-muted-foreground">
-          Showing the first 200 entries in this folder. Open a folder to narrow
-          the list.
-        </p>
+      {entries.length > visibleEntries.length ? (
+        <div className="flex items-center justify-between gap-3 border-border/50 border-t px-4 py-3 text-2xs text-muted-foreground">
+          <span>
+            Showing {visibleEntries.length} of {entries.length} entries.
+          </span>
+          <button
+            className="shrink-0 font-medium text-foreground hover:underline"
+            onClick={() =>
+              setVisibleEntryCount((current) =>
+                nextRepositoryEntryLimit(current, entries.length),
+              )
+            }
+            type="button"
+          >
+            Show next{" "}
+            {Math.min(
+              REPOSITORY_ENTRY_PAGE_SIZE,
+              entries.length - visibleEntries.length,
+            )}
+          </button>
+        </div>
       ) : null}
     </div>
   );
