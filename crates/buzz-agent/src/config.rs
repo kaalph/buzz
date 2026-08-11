@@ -15,7 +15,8 @@ pub const PROTOCOL_VERSION: u32 = 2;
 /// - **OpenAI Responses / Chat Completions**: effort support is model-dependent and normalized at
 ///   request time; `max` is valid for documented max-supporting families such as GPT-5.6.
 /// - **Databricks**: routed by model family (Claude → Anthropic mapping, GPT-5 → Responses, MLflow → Chat).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThinkingEffort {
     None,
     Minimal,
