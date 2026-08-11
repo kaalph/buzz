@@ -12,7 +12,7 @@ pub mod model_capabilities;
 pub mod types;
 mod wire;
 
-pub use catalog::{discover_databricks_models, ModelEntry, DATABRICKS_V2_KNOWN_MODELS};
+pub use catalog::{discover_databricks_models, ModelEntry};
 pub use config::Provider;
 pub use types::AgentError;
 

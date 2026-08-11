@@ -31,19 +31,16 @@ pub struct ModelEntry {
     pub name: String,
 }
 
-/// Known Databricks AI Gateway v2 models — used only when an authenticated
-/// `api/ai-gateway/v2/endpoints` call succeeds with an empty list.
-/// Mirrors goose's `DATABRICKS_V2_KNOWN_MODELS`.
-pub const DATABRICKS_V2_KNOWN_MODELS: &[&str] =
-    &["databricks-gpt-5-5", "databricks-claude-opus-4-7"];
-
 const AUTHENTICATED_EMPTY_CATALOG_SUFFIX: &str = " (default catalog)";
 
+/// Fallback catalog used only when an authenticated `api/ai-gateway/v2/endpoints`
+/// call succeeds with an empty list. The known-model ids come from the manifest
+/// ([`model_capabilities::databricks_v2_known_models`]), the single runtime source.
 fn authenticated_empty_v2_catalog() -> Vec<ModelEntry> {
-    DATABRICKS_V2_KNOWN_MODELS
+    crate::model_capabilities::databricks_v2_known_models()
         .iter()
         .map(|id| ModelEntry {
-            id: id.to_string(),
+            id: id.clone(),
             name: format!("{id}{AUTHENTICATED_EMPTY_CATALOG_SUFFIX}"),
         })
         .collect()
@@ -648,7 +645,11 @@ mod tests {
         let models = authenticated_empty_v2_catalog();
         let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
 
-        assert_eq!(ids, DATABRICKS_V2_KNOWN_MODELS);
+        let known: Vec<&str> = crate::model_capabilities::databricks_v2_known_models()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(ids, known);
         assert!(models.iter().all(|model| {
             model.name == format!("{}{AUTHENTICATED_EMPTY_CATALOG_SUFFIX}", model.id)
         }));
