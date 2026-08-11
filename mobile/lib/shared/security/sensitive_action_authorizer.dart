@@ -23,7 +23,10 @@ class LocalSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
         localizedReason: 'Confirm sending your Buzz identity to desktop',
         biometricOnly: false,
         sensitiveTransaction: true,
-        persistAcrossBackgrounding: false,
+        // iOS may briefly background the app while presenting Face ID. Keep
+        // this authorization alive across that system transition instead of
+        // returning a cancellation that forces the user to tap and retry.
+        persistAcrossBackgrounding: true,
       );
       return authenticated ? DeviceAuthResult.success : DeviceAuthResult.failed;
     } on LocalAuthException catch (error) {
