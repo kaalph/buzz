@@ -420,7 +420,7 @@
     "id": "openai-multi-digit-version-gpt5-10",
     "provider": "openai",
     "raw_model_id": "gpt-5-10",
-    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -643,7 +643,7 @@
     "id": "dbv2-goose-opus-5-is-anthropic",
     "provider": "databricks_v2",
     "raw_model_id": "goose-opus-5",
-    "_note": "[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1014,7 +1014,7 @@
     "id": "openai-gpt5-10-preview-reject-base",
     "provider": "openai",
     "raw_model_id": "gpt-5-10-preview",
-    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1033,7 +1033,7 @@
     "id": "openai-gpt5-2-mini-reject-base",
     "provider": "openai",
     "raw_model_id": "gpt-5-2-mini",
-    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1052,7 +1052,7 @@
     "id": "openai-gpt5-9-dot-1-reject-base",
     "provider": "openai",
     "raw_model_id": "gpt-5-9.1",
-    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class B1] uncurated/adversarial openai input; base gpt-5 prefix binds after the multi-digit guard is dropped.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1065,6 +1065,46 @@
       "databricks_v2_wire_route": "not-applicable",
       "normalization_policy": "openai-standard",
       "registry_label": null
+    }
+  },
+  {
+    "id": "dbv2-gpt5-10-reject-base-route-preserved",
+    "provider": "databricks_v2",
+    "raw_model_id": "databricks-gpt-5-10",
+    "_note": "[reshape delta class B2] uncurated databricks_v2 gpt-5-<multi-digit>: base gpt-5 prefix binds (efforts narrow to minimal..high, normalization openai-standard) while the databricks_v2 wire route stays openai-responses. Pins the one delta class the other changed vectors did not exercise.",
+    "expect": {
+      "thinking_mode": "none",
+      "supported_efforts": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_effort": "medium",
+      "databricks_v2_wire_route": "openai-responses",
+      "normalization_policy": "openai-standard",
+      "registry_label": null
+    }
+  },
+  {
+    "id": "dbv2-gpt-5-2-divergent-pin-preserved",
+    "provider": "databricks_v2",
+    "raw_model_id": "databricks-gpt-5-2",
+    "_note": "Guards the sole deliberately-divergent exact record: databricks-gpt-5-2 pins the removed dbv2-gpt-code-names-segment outcome (none..xhigh + openai-clamp-max-to-xhigh), NOT what the kept gpt-5 base prefix would produce (minimal..high + openai-standard). If the pin regresses toward the prefix, this vector fails.",
+    "expect": {
+      "thinking_mode": "none",
+      "supported_efforts": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "default_effort": "medium",
+      "databricks_v2_wire_route": "openai-responses",
+      "normalization_policy": "openai-clamp-max-to-xhigh",
+      "registry_label": "GPT-5.2"
     }
   },
   {
@@ -1180,7 +1220,7 @@
     "id": "dbv2-gpt5-segment-positive",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt5-custom",
-    "_note": "[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1201,7 +1241,7 @@
     "id": "dbv2-dual-marker-gpt-wins-openai",
     "provider": "databricks_v2",
     "raw_model_id": "gpt-opus-5",
-    "_note": "[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1612,7 +1652,7 @@
     "id": "dbv2-gpt-doubled-separator",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt--5",
-    "_note": "[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See scripts/model-capabilities-compat.md.",
+    "_note": "[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
