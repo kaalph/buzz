@@ -55,7 +55,7 @@ import {
 import { appearanceCommunityLabel } from "../lib/appearanceScopeCopy";
 import {
   AccentPickerContent,
-  ConversationDensitySetting,
+  ConversationDisplaySettings,
   GlassBackgroundSetting,
   LinkPreviewStyleSetting,
   ProminentActiveTabSetting,
@@ -782,7 +782,7 @@ function ThemeSettingsCard() {
           data-testid="appearance-preferences-card"
           title="Preferences"
         >
-          <ConversationDensitySetting />
+          <ConversationDisplaySettings />
           <LinkPreviewStyleSetting />
           <ThreadLayoutSetting />
         </SettingsOptionGroup>
