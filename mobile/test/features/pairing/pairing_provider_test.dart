@@ -196,6 +196,7 @@ void main() {
       late _ControllableSocket socket;
       late PairingNotifier notifier;
       late FakeAuthNotifier importAuth;
+      late _FakeSensitiveActionAuthorizer authorizer;
       late Completer<void> validation;
       late String pairingCode;
 
@@ -207,6 +208,7 @@ void main() {
             '&relay=wss%3A%2F%2Fpairing.buzz.xyz&v=1';
         validation = Completer<void>();
         importAuth = FakeAuthNotifier();
+        authorizer = _FakeSensitiveActionAuthorizer();
         notifier = PairingNotifier(
           credentialValidator:
               ({required String relayUrl, required String? nsec}) =>
@@ -230,6 +232,7 @@ void main() {
           overrides: [
             pairingProvider.overrideWith(() => notifier),
             authProvider.overrideWith(() => importAuth),
+            sensitiveActionAuthorizerProvider.overrideWithValue(authorizer),
           ],
         );
         container.read(pairingProvider);
@@ -246,6 +249,8 @@ void main() {
           message: {'type': 'sas-confirm'},
           includeTranscriptHash: true,
         );
+        await Future<void>.delayed(Duration.zero);
+        if (protected && authorizer.result != DeviceAuthResult.success) return;
         socket.sendSourceMessage(
           sourceSecret: sourceSecret,
           sessionSecretHex: sessionSecretHex,
@@ -279,12 +284,61 @@ void main() {
       test('checked protection persists on a successful import', () async {
         await beginImport(protected: true);
 
+        expect(authorizer.calls, 1);
         validation.complete();
         await Future<void>.delayed(Duration.zero);
 
         expect(
           importAuth.lastCommunity?.sensitiveActionPolicy,
           SensitiveActionPolicy.enabled,
+        );
+      });
+
+      test('unenrolled biometrics prevent a protected import', () async {
+        authorizer.result = DeviceAuthResult.unavailable;
+
+        await beginImport(protected: true);
+
+        final state = container.read(pairingProvider);
+        expect(authorizer.calls, 1);
+        expect(state.status, PairingStatus.confirmingSas);
+        expect(state.userConfirmedSas, isFalse);
+        expect(state.errorMessage, contains('Enroll Face ID or biometrics'));
+        expect(importAuth.lastCommunity, isNull);
+        expect(
+          socket
+              .decryptedPublishedMessages(sourceSecret)
+              .any((message) => message['type'] == 'complete'),
+          isFalse,
+        );
+      });
+
+      test('stale biometric approval cannot advance a reset import', () async {
+        final pendingAuthorization = Completer<DeviceAuthResult>();
+        authorizer.pending = pendingAuthorization;
+        await notifier.pair(pairingCode);
+        notifier.setProtectSensitiveActions(true);
+        notifier.confirmSas();
+        socket.sendSourceMessage(
+          sourceSecret: sourceSecret,
+          sessionSecretHex: sessionSecretHex,
+          message: {'type': 'sas-confirm'},
+          includeTranscriptHash: true,
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(authorizer.calls, 1);
+
+        notifier.reset();
+        pendingAuthorization.complete(DeviceAuthResult.success);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(container.read(pairingProvider).status, PairingStatus.idle);
+        expect(importAuth.lastCommunity, isNull);
+        expect(
+          socket
+              .decryptedPublishedMessages(sourceSecret)
+              .any((message) => message['type'] == 'complete'),
+          isFalse,
         );
       });
 
@@ -687,6 +741,12 @@ class _FakeSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
 
   @override
   Future<DeviceAuthResult> authorizeIdentityAction() async {
+    calls++;
+    return pending?.future ?? result;
+  }
+
+  @override
+  Future<DeviceAuthResult> authorizeBiometricProtection() async {
     calls++;
     return pending?.future ?? result;
   }

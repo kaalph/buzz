@@ -6,6 +6,8 @@ enum DeviceAuthResult { success, cancelled, unavailable, lockedOut, failed }
 
 abstract interface class SensitiveActionAuthorizer {
   Future<DeviceAuthResult> authorizeIdentityAction();
+
+  Future<DeviceAuthResult> authorizeBiometricProtection();
 }
 
 class LocalSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
@@ -15,13 +17,38 @@ class LocalSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
   final LocalAuthentication _authentication;
 
   @override
-  Future<DeviceAuthResult> authorizeIdentityAction() async {
+  Future<DeviceAuthResult> authorizeIdentityAction() => _authorize(
+    localizedReason: 'Confirm sending your Buzz identity to desktop',
+    biometricOnly: false,
+  );
+
+  @override
+  Future<DeviceAuthResult> authorizeBiometricProtection() async {
+    try {
+      final availableBiometrics = await _authentication
+          .getAvailableBiometrics();
+      if (availableBiometrics.isEmpty) return DeviceAuthResult.unavailable;
+      return _authorize(
+        localizedReason: 'Enable biometrics for secure actions',
+        biometricOnly: true,
+      );
+    } on LocalAuthException catch (error) {
+      return _resultFor(error);
+    } catch (_) {
+      return DeviceAuthResult.failed;
+    }
+  }
+
+  Future<DeviceAuthResult> _authorize({
+    required String localizedReason,
+    required bool biometricOnly,
+  }) async {
     try {
       final supported = await _authentication.isDeviceSupported();
       if (!supported) return DeviceAuthResult.unavailable;
       final authenticated = await _authentication.authenticate(
-        localizedReason: 'Confirm sending your Buzz identity to desktop',
-        biometricOnly: false,
+        localizedReason: localizedReason,
+        biometricOnly: biometricOnly,
         sensitiveTransaction: true,
         // iOS may briefly background the app while presenting Face ID. Keep
         // this authorization alive across that system transition instead of
@@ -30,7 +57,14 @@ class LocalSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
       );
       return authenticated ? DeviceAuthResult.success : DeviceAuthResult.failed;
     } on LocalAuthException catch (error) {
-      return switch (error.code) {
+      return _resultFor(error);
+    } catch (_) {
+      return DeviceAuthResult.failed;
+    }
+  }
+
+  static DeviceAuthResult _resultFor(LocalAuthException error) =>
+      switch (error.code) {
         LocalAuthExceptionCode.userCanceled ||
         LocalAuthExceptionCode.systemCanceled ||
         LocalAuthExceptionCode.timeout => DeviceAuthResult.cancelled,
@@ -43,10 +77,6 @@ class LocalSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
         LocalAuthExceptionCode.uiUnavailable => DeviceAuthResult.unavailable,
         _ => DeviceAuthResult.failed,
       };
-    } catch (_) {
-      return DeviceAuthResult.failed;
-    }
-  }
 }
 
 final sensitiveActionAuthorizerProvider = Provider<SensitiveActionAuthorizer>((

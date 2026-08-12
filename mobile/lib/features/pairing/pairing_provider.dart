@@ -216,6 +216,28 @@ class PairingNotifier extends Notifier<PairingState> {
         );
         return;
       }
+    } else if (!_sendIdentityToSource && state.protectSensitiveActions) {
+      final pairingGeneration = _pairingGeneration;
+      state = state.copyWith(authorizationInProgress: true);
+      final result = await ref
+          .read(sensitiveActionAuthorizerProvider)
+          .authorizeBiometricProtection();
+      if (pairingGeneration != _pairingGeneration ||
+          !_userConfirmedSas ||
+          !_sasConfirmReceived ||
+          state.status != PairingStatus.confirmingSas ||
+          !state.authorizationInProgress) {
+        return;
+      }
+      if (result != DeviceAuthResult.success) {
+        _userConfirmedSas = false;
+        state = state.copyWith(
+          userConfirmedSas: false,
+          authorizationInProgress: false,
+          errorMessage: _biometricProtectionError(result),
+        );
+        return;
+      }
     }
 
     _userConfirmedSas = false;
@@ -233,6 +255,20 @@ class PairingNotifier extends Notifier<PairingState> {
       }
     }
   }
+
+  static String _biometricProtectionError(
+    DeviceAuthResult result,
+  ) => switch (result) {
+    DeviceAuthResult.cancelled =>
+      'Biometric setup was cancelled. Nothing was transferred.',
+    DeviceAuthResult.unavailable =>
+      'Biometrics are unavailable. Enroll Face ID or biometrics and try again, or turn this option off.',
+    DeviceAuthResult.lockedOut =>
+      'Biometrics are locked. Unlock them in system settings and try again.',
+    DeviceAuthResult.failed =>
+      'Biometric confirmation failed. Nothing was transferred.',
+    DeviceAuthResult.success => '',
+  };
 
   static String _authorizationError(
     DeviceAuthResult result,
