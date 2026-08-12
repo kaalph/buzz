@@ -111,8 +111,12 @@ const FamilyRuleSchema = z
     default_effort: EffortSchema.nullable(),
     databricks_v2_wire_route: WireRouteSchema,
     normalization_policy: NormalizationSchema,
+    // Documentation-only key; modeled so strict parsing accepts the manifest
+    // while still rejecting an unmodeled (typo'd) field. Mirrors the Rust
+    // `FamilyRule` doc field under `deny_unknown_fields`.
+    _comment: z.string().optional(),
   })
-  .loose();
+  .strict();
 
 const ExactRecordSchema = z
   .object({
@@ -124,8 +128,17 @@ const ExactRecordSchema = z
     default_effort: EffortSchema.nullable(),
     databricks_v2_wire_route: WireRouteSchema,
     normalization_policy: NormalizationSchema,
+    // Documentation/provenance keys; modeled for strict parsing, not read at
+    // runtime. Mirrors the Rust `ExactRecord` doc fields under
+    // `deny_unknown_fields`.
+    _provenance: z.string().optional(),
+    source: z.string().optional(),
+    _source: z.string().optional(),
+    _reconciliation: z.string().optional(),
+    _reconciliation_note: z.string().optional(),
+    _reconciliation_doc: z.string().optional(),
   })
-  .loose();
+  .strict();
 
 const FallbackStateSchema = z
   .object({
@@ -135,34 +148,43 @@ const FallbackStateSchema = z
     default_effort: EffortSchema.nullable(),
     normalization_policy: NormalizationSchema,
   })
-  .loose();
+  .strict();
 
-const FallbackPairSchema = z.object({
-  blank: FallbackStateSchema,
-  concrete_unknown: FallbackStateSchema,
-});
+const FallbackPairSchema = z
+  .object({
+    blank: FallbackStateSchema,
+    concrete_unknown: FallbackStateSchema,
+  })
+  .strict();
 
 // Fixed named providers with a `_default` catch-all, mirroring the Rust
 // `ProviderFallbacks` struct. Enumerating the keys structurally guarantees
 // `_default` is present (the resolver's total-function backstop).
-const ProviderFallbacksSchema = z.object({
-  anthropic: FallbackPairSchema,
-  openai: FallbackPairSchema,
-  databricks: FallbackPairSchema,
-  databricks_v2: FallbackPairSchema,
-  openrouter: FallbackPairSchema,
-  _default: FallbackPairSchema,
-});
+const ProviderFallbacksSchema = z
+  .object({
+    anthropic: FallbackPairSchema,
+    openai: FallbackPairSchema,
+    databricks: FallbackPairSchema,
+    databricks_v2: FallbackPairSchema,
+    openrouter: FallbackPairSchema,
+    _default: FallbackPairSchema,
+  })
+  .strict();
 
-const ManifestSchema = z
+export const ManifestSchema = z
   .object({
     family_tokens: z.array(z.string()).min(1),
     family_rules: z.array(FamilyRuleSchema),
     databricks_v2_known_models: z.array(z.string()),
     exact_records: z.array(ExactRecordSchema),
     provider_fallbacks: ProviderFallbacksSchema,
+    // Root documentation keys; modeled for strict parsing, not read at runtime.
+    // Mirrors the Rust `Manifest` doc fields under `deny_unknown_fields`.
+    _comment: z.string().optional(),
+    _comment_databricks_v2_known_models: z.string().optional(),
+    _sources: z.record(z.string(), z.string()).optional(),
   })
-  .loose();
+  .strict();
 
 type ParsedManifest = z.infer<typeof ManifestSchema>;
 type FamilyRule = z.infer<typeof FamilyRuleSchema>;

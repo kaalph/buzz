@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { resolveModelCapabilities } from "./modelCapabilities.ts";
+import {
+  ManifestSchema,
+  resolveModelCapabilities,
+} from "./modelCapabilities.ts";
 
 // The normative corpus (`scripts/normative-corpus.json`) is the cross-language
 // contract: the Rust interpreter's test suite runs the same executable vectors
@@ -82,4 +85,38 @@ test("registryLabel axis is exercised by at least 12 exact-record vectors", () =
       `${entry.id ?? "<no-id>"}: registryLabel`,
     );
   }
+});
+
+// The TS manifest schema mirrors Rust's `#[serde(deny_unknown_fields)]`: a
+// misspelled key must fail in BOTH languages, not pass silently on desktop.
+// Loaded by relative path — same rationale as the corpus above.
+const manifestUrl = new URL(
+  "../../../../../scripts/model-capabilities.json",
+  import.meta.url,
+);
+const manifestJson = JSON.parse(
+  readFileSync(fileURLToPath(manifestUrl), "utf8"),
+);
+
+test("ManifestSchema accepts the committed manifest verbatim", () => {
+  // The strict schema must model every documented key the manifest actually
+  // ships (`_comment`, `_provenance`, `source`, `_sources`, …); a green parse
+  // here proves strictness didn't over-reach and break the real data.
+  assert.doesNotThrow(() => ManifestSchema.parse(manifestJson));
+});
+
+test("ManifestSchema rejects an unknown top-level field", () => {
+  // Mirrors Rust `deny_unknown_fields`: a typo'd root key is a hard error, not
+  // an ignored no-op. Without `.strict()` this passed on desktop while Rust
+  // failed — the exact drift this alignment closes.
+  const withTypo = { ...manifestJson, faimly_rules: [] };
+  assert.throws(() => ManifestSchema.parse(withTypo));
+});
+
+test("ManifestSchema rejects an unknown field inside an exact record", () => {
+  // Strictness must reach nested objects too, not just the root — an exact
+  // record with a stray key is where a hand-edit typo most plausibly lands.
+  const mutated = structuredClone(manifestJson);
+  mutated.exact_records[0].raw_modle_id = "typo";
+  assert.throws(() => ManifestSchema.parse(mutated));
 });
