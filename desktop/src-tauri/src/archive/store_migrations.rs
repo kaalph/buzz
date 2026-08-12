@@ -17,11 +17,13 @@ use rusqlite::{params, Connection};
 ///
 /// Ordering: M2 (column additions) runs before M1 (index rebuild) so that
 /// the M1 rebuild, which calls `insert_metric_index_row`, always operates
-/// against a schema that includes the cache-read columns.
+/// against a schema that includes the cache-read columns. M4 (retention
+/// policy storage) runs last; it is independent of M1–M3.
 pub(super) fn apply_schema_migrations(conn: &Connection) -> Result<(), String> {
     migrate_add_cache_read_tokens(conn)?;
     migrate_add_cache_write_and_pricing(conn)?;
-    migrate_add_harness_to_metric_index(conn)
+    migrate_add_harness_to_metric_index(conn)?;
+    migrate_add_retention_policies(conn)
 }
 
 /// M1: add `harness TEXT` column to `agent_metric_index` and rebuild index
@@ -320,6 +322,181 @@ fn migrate_add_cache_write_and_pricing(conn: &Connection) -> Result<(), String> 
 
     tx.commit()
         .map_err(|e| format!("migration M3: commit: {e}"))?;
+
+    Ok(())
+}
+
+/// M4: create the retention-policy storage — `retention_policies` (per
+/// `(identity, relay, scope_type, scope_value, kind)` policy rows),
+/// `archive_meta` (k/v state for the Phase-2 prune lease), and the
+/// `archived_at`-covering scope-age index — then seed a default policy for
+/// every `(subscription, kind)` pair already in `save_subscriptions`.
+///
+/// Unlike M1–M3, M4 CANNOT use the "check marker → `BEGIN DEFERRED`" pattern.
+/// On a fresh DB two connections can open concurrently (the observer- and
+/// metric-archive seed hooks each `open_archive_db`), both read no marker, and
+/// a `DEFERRED` transaction lets both proceed on the same snapshot — the loser
+/// hits `SQLITE_BUSY_SNAPSHOT` or double-seeds. Instead M4 takes the write lock
+/// up front with `BEGIN IMMEDIATE` and **rechecks the marker inside the lock**:
+/// the race loser blocks on `busy_timeout`, then observes the winner's
+/// committed marker and no-ops. The cheap pre-lock guard keeps steady-state
+/// opens off the write lock entirely (M4 only takes it until the marker lands).
+///
+/// All DDL is `CREATE ... IF NOT EXISTS` and seeding is `ON CONFLICT DO
+/// NOTHING`, so the whole body is idempotent; the marker is written last inside
+/// the same transaction, so a crash before COMMIT rolls back every object and
+/// the next open re-runs from scratch.
+fn migrate_add_retention_policies(conn: &Connection) -> Result<(), String> {
+    // Cheap pre-lock guard: steady-state opens (marker already present) never
+    // take the write lock. The marker is written last in M4's transaction, so
+    // its presence implies the full schema + seed committed.
+    if retention_migration_applied(conn)? {
+        return Ok(());
+    }
+
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| format!("migration M4: begin immediate: {e}"))?;
+
+    let result = migrate_add_retention_policies_locked(conn);
+
+    if result.is_ok() {
+        conn.execute_batch("COMMIT")
+            .map_err(|e| format!("migration M4: commit: {e}"))?;
+    } else {
+        // Best-effort rollback; surface the original error to the caller.
+        let _ = conn.execute_batch("ROLLBACK");
+    }
+    result
+}
+
+/// M4 body, run under the `BEGIN IMMEDIATE` write lock held by
+/// `migrate_add_retention_policies`.
+fn migrate_add_retention_policies_locked(conn: &Connection) -> Result<(), String> {
+    // In-lock recheck: a concurrent first-opener may have committed the marker
+    // while we were blocked on the write lock. If so, this connection has
+    // nothing to do — the winner already created the schema and seeded.
+    if retention_migration_applied(conn)? {
+        return Ok(());
+    }
+
+    // Idempotent DDL — repairs a partial state left by any interrupted run.
+    conn.execute_batch(super::retention::RETENTION_SCHEMA)
+        .map_err(|e| format!("migration M4: create retention schema: {e}"))?;
+    conn.execute_batch(super::retention::SCOPE_AGE_INDEX_DDL)
+        .map_err(|e| format!("migration M4: create scope-age index: {e}"))?;
+
+    // Schema-shape recheck: confirm all three objects (two tables + one index)
+    // actually materialized before seeding or writing the marker, so a marker
+    // never certifies a half-built schema.
+    if retention_schema_object_count(conn)? != 3 {
+        return Err(
+            "migration M4: retention schema incomplete after DDL (expected 2 tables + 1 index)"
+                .to_string(),
+        );
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    seed_retention_from_subscriptions(conn, now)?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO archive_migrations (name, applied_at) \
+         VALUES ('add_retention_policies', ?1)",
+        params![now],
+    )
+    .map_err(|e| format!("migration M4: record marker: {e}"))?;
+
+    Ok(())
+}
+
+/// Whether the M4 marker is present. Its presence implies the retention schema
+/// and default seed committed (the marker is written last in M4's transaction).
+fn retention_migration_applied(conn: &Connection) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM archive_migrations WHERE name = 'add_retention_policies'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("migration M4: guard check: {e}"))?;
+    Ok(count > 0)
+}
+
+/// Count the M4 schema objects present: the `retention_policies` and
+/// `archive_meta` tables plus the `idx_archived_event_scopes_age` index. A
+/// fully-created schema returns 3.
+fn retention_schema_object_count(conn: &Connection) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE (type = 'table' AND name IN ('retention_policies', 'archive_meta'))
+            OR (type = 'index' AND name = 'idx_archived_event_scopes_age')",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("migration M4: schema-shape check: {e}"))
+}
+
+/// Seed a default retention policy for every `(subscription, kind)` pair in
+/// `save_subscriptions`: kind 24200 → 30 days, every other kind → an explicit
+/// `NULL` (Forever) row. Runs on the caller's transaction so seeding is atomic
+/// with the marker.
+///
+/// **Fail-closed on malformed `kinds` JSON.** A subscription whose `kinds`
+/// column does not parse as a JSON integer array aborts the whole migration
+/// (surfaced error, marker not written) rather than silently seeding nothing —
+/// a subscription with no policy would leave its already-archived data
+/// ungoverned (Forever), the exact immortal-data failure the normalized table
+/// exists to prevent. Malformed `kinds` is effectively impossible in practice
+/// (the column is always machine-serialized from `Vec<u32>`), so this is a
+/// defensive guard; the next open retries cleanly once the row is repaired.
+fn seed_retention_from_subscriptions(conn: &Connection, now: i64) -> Result<(), String> {
+    let subscriptions: Vec<(String, String, String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT identity_pubkey, relay_url, scope_type, scope_value, kinds
+                 FROM save_subscriptions",
+            )
+            .map_err(|e| format!("migration M4: prepare subscription scan: {e}"))?;
+        // Bind the collected rows to a local so the `MappedRows` temporary
+        // (which borrows `stmt`) is dropped at the end of this statement,
+        // before `stmt` itself — otherwise it outlives `stmt` as the block's
+        // tail expression (E0597).
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| format!("migration M4: query subscriptions: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("migration M4: read subscription row: {e}"))?;
+        rows
+    };
+
+    for (identity, relay, scope_type, scope_value, kinds_json) in &subscriptions {
+        let kinds: Vec<i64> = serde_json::from_str(kinds_json).map_err(|e| {
+            format!(
+                "migration M4: malformed kinds JSON for subscription \
+                 ({scope_type}, {scope_value}): {e}"
+            )
+        })?;
+        super::retention::seed_default_policies_for_kinds(
+            conn,
+            identity,
+            relay,
+            scope_type,
+            scope_value,
+            &kinds,
+            now,
+        )?;
+    }
 
     Ok(())
 }

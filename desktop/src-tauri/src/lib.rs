@@ -454,6 +454,9 @@ pub fn run() {
                 eprintln!("buzz-desktop: failed to create nest: {error}");
             }
 
+            // Warm the archive DB init barrier (non-fatal); see archive::spawn_warm_init.
+            archive::spawn_warm_init(app_handle.clone());
+
             // Resolve the REPOS symlink from the persisted repos_dir BEFORE
             // agents are restored below, and decide whether restore is safe.
             // The frontend's apply_workspace runs only after React mounts —
@@ -904,6 +907,9 @@ pub fn run() {
             archive::index_observer_channel_id,
             archive::read_unindexed_observer_rows,
             archive::get_agent_usage_series,
+            archive::set_save_subscription_retention,
+            archive::list_retention_policies,
+            archive::delete_retention_policy,
             is_auto_update_supported,
             set_window_vibrancy,
             #[cfg(target_os = "macos")]

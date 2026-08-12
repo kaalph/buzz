@@ -10,6 +10,9 @@ fn in_memory() -> Connection {
     conn.pragma_update(None, "journal_mode", "WAL").unwrap();
     conn.pragma_update(None, "busy_timeout", 5000).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
+    // Match production `open_archive_db`: base schema alone lacks the M4
+    // `retention_policies` table that subscription mutators now seed into.
+    apply_schema_migrations(&conn).unwrap();
     conn
 }
 

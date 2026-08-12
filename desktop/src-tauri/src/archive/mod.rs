@@ -18,10 +18,14 @@
 //! == agent) is applied fail-closed.
 
 mod agent_usage;
+mod archive_db;
 mod metric_store;
 mod pipeline;
+pub mod retention;
 pub mod store;
 mod store_migrations;
+
+pub use archive_db::ArchiveDb;
 
 use pipeline::{commit_archive, plan_archive, query_buckets};
 
@@ -31,7 +35,6 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::managed_agents::nest_dir;
 use crate::relay::{query_relay, relay_ws_url_with_override};
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -42,10 +45,20 @@ const OBSERVER_FRAME_TELEMETRY: &str = "telemetry";
 
 // ── DB helpers ───────────────────────────────────────────────────────────────
 
-fn open_db() -> Result<Connection, String> {
-    let nest = nest_dir().ok_or("cannot resolve nest directory for archive")?;
-    let db_path = nest.join("archive").join("archive.db");
-    store::open_archive_db(&db_path)
+/// Warm the archive DB init barrier on a background task, now that the nest
+/// exists, so the first-open schema migration cost (M4's index build over a
+/// large archive) is paid at startup rather than blocking a user's first
+/// archive command. The globally-mounted observer archive producer also
+/// `await`s this barrier before its first write, so warming it early avoids a
+/// stall on the first observer frame. Non-fatal: the first real archive command
+/// retries and surfaces any error.
+pub fn spawn_warm_init(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        use tauri::Manager;
+        if let Err(error) = app.state::<AppState>().archive_db.warm_init().await {
+            eprintln!("buzz-desktop: archive DB init deferred: {error}");
+        }
+    });
 }
 
 fn identity_pubkey(state: &AppState) -> Result<String, String> {
@@ -58,19 +71,6 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
-}
-
-async fn run_archive_db_task<T, F>(task: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce(&Connection) -> Result<T, String> + Send + 'static,
-{
-    tokio::task::spawn_blocking(move || {
-        let conn = open_db()?;
-        task(&conn)
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
 // ── Scope type ───────────────────────────────────────────────────────────────
@@ -157,10 +157,10 @@ pub async fn archive_events(
     // ── Phase 1: plan (blocking SQLite) ─────────────────────────────────────
     let plan_identity_pk = identity_pk.clone();
     let plan_relay_url = relay_url.clone();
-    let plan = run_archive_db_task(move |conn| {
-        plan_archive(candidates, &plan_identity_pk, &plan_relay_url, conn)
-    })
-    .await?;
+    let plan = state
+        .archive_db
+        .with_conn(move |conn| plan_archive(candidates, &plan_identity_pk, &plan_relay_url, conn))
+        .await?;
 
     // ── Phase 2: relay queries (async) ───────────────────────────────────────
     let state_ref: &AppState = &state;
@@ -174,19 +174,21 @@ pub async fn archive_events(
     };
     let commit_identity_pk = identity_pk.clone();
     let commit_relay_url = relay_url.clone();
-    run_archive_db_task(move |conn| {
-        commit_archive(
-            bucket_results,
-            plan.ephemeral,
-            plan.pre_dropped,
-            &commit_identity_pk,
-            &commit_relay_url,
-            &owner_keys,
-            now,
-            conn,
-        )
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            commit_archive(
+                bucket_results,
+                plan.ephemeral,
+                plan.pre_dropped,
+                &commit_identity_pk,
+                &commit_relay_url,
+                &owner_keys,
+                now,
+                conn,
+            )
+        })
+        .await
 }
 
 /// Validate an ephemeral observer frame (kind 24200) against ALL local rules.
@@ -324,16 +326,25 @@ pub async fn create_save_subscription(
     let kinds_json =
         serde_json::to_string(&kinds).map_err(|e| format!("failed to serialize kinds: {e}"))?;
 
-    let conn = open_db()?;
-    store::upsert_save_subscription(
-        &conn,
-        &identity_pk,
-        &relay_url,
-        scope_type.as_str(),
-        &scope_value,
-        &kinds_json,
-        now,
-    )
+    // `kinds` here is Vec<u32>; the policy helper wants i64 (SQLite-native,
+    // matches the retention_policies.kind column). Widening u32→i64 is lossless.
+    let policy_kinds: Vec<i64> = kinds.iter().map(|&k| i64::from(k)).collect();
+    let scope_type_str = scope_type.as_str().to_string();
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            retention::create_subscription_with_policies(
+                conn,
+                &identity_pk,
+                &relay_url,
+                &scope_type_str,
+                &scope_value,
+                &policy_kinds,
+                &kinds_json,
+                now,
+            )
+        })
+        .await
 }
 
 /// Probe: the current user has access to `channel_id` (kind 39002 lists them).
@@ -436,10 +447,12 @@ pub async fn merge_save_subscription_kinds(
     let relay_url = relay_ws_url_with_override(&state);
     let now = now_secs();
     let owner_pk = identity_pk.clone();
-    run_archive_db_task(move |conn| {
-        store::merge_owner_p_kinds(conn, &identity_pk, &relay_url, &owner_pk, kind, now)
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            store::merge_owner_p_kinds(conn, &identity_pk, &relay_url, &owner_pk, kind, now)
+        })
+        .await
 }
 
 // ── remove_save_subscription_kind ────────────────────────────────────────────
@@ -468,10 +481,12 @@ pub async fn remove_save_subscription_kind(
     let identity_pk = identity_pubkey(&state)?;
     let relay_url = relay_ws_url_with_override(&state);
     let owner_pk = identity_pk.clone();
-    run_archive_db_task(move |conn| {
-        store::remove_owner_p_kind(conn, &identity_pk, &relay_url, &owner_pk, kind)
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            store::remove_owner_p_kind(conn, &identity_pk, &relay_url, &owner_pk, kind)
+        })
+        .await
 }
 
 // ── list_save_subscriptions ──────────────────────────────────────────────────
@@ -483,7 +498,9 @@ pub async fn list_save_subscriptions(
 ) -> Result<Vec<store::SaveSubscription>, String> {
     let identity_pk = identity_pubkey(&state)?;
     let relay_url = relay_ws_url_with_override(&state);
-    run_archive_db_task(move |conn| store::list_save_subscriptions(conn, &identity_pk, &relay_url))
+    state
+        .archive_db
+        .with_conn(move |conn| store::list_save_subscriptions(conn, &identity_pk, &relay_url))
         .await
 }
 
@@ -501,16 +518,18 @@ pub async fn delete_save_subscription(
 ) -> Result<bool, String> {
     let identity_pk = identity_pubkey(&state)?;
     let relay_url = relay_ws_url_with_override(&state);
-    run_archive_db_task(move |conn| {
-        store::delete_save_subscription(
-            conn,
-            &identity_pk,
-            &relay_url,
-            scope_type.as_str(),
-            &scope_value,
-        )
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            store::delete_save_subscription(
+                conn,
+                &identity_pk,
+                &relay_url,
+                scope_type.as_str(),
+                &scope_value,
+            )
+        })
+        .await
 }
 
 // ── read_archived_events ─────────────────────────────────────────────────────
@@ -538,18 +557,20 @@ pub async fn read_archived_observer_events_for_channel(
 ) -> Result<Vec<String>, String> {
     let identity_pk = identity_pubkey(&state)?;
     let relay_url = relay_ws_url_with_override(&state);
-    run_archive_db_task(move |conn| {
-        store::read_archived_observer_events_for_channel(
-            conn,
-            &identity_pk,
-            &relay_url,
-            &channel_id,
-            before_created_at,
-            before_id.as_deref(),
-            limit.unwrap_or(DEFAULT_READ_LIMIT),
-        )
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            store::read_archived_observer_events_for_channel(
+                conn,
+                &identity_pk,
+                &relay_url,
+                &channel_id,
+                before_created_at,
+                before_id.as_deref(),
+                limit.unwrap_or(DEFAULT_READ_LIMIT),
+            )
+        })
+        .await
 }
 
 // ── index_observer_channel_id ─────────────────────────────────────────────────
@@ -569,20 +590,22 @@ pub async fn index_observer_channel_id(
 ) -> Result<(), String> {
     let identity_pk = identity_pubkey(&state)?;
     let relay_url = relay_ws_url_with_override(&state);
-    run_archive_db_task(move |conn| {
-        for entry in &entries {
-            store::upsert_observer_channel_index(
-                conn,
-                &identity_pk,
-                &relay_url,
-                &entry.event_id,
-                entry.channel_id.as_deref(),
-                entry.created_at,
-            )?;
-        }
-        Ok(())
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            for entry in &entries {
+                store::upsert_observer_channel_index(
+                    conn,
+                    &identity_pk,
+                    &relay_url,
+                    &entry.event_id,
+                    entry.channel_id.as_deref(),
+                    entry.created_at,
+                )?;
+            }
+            Ok(())
+        })
+        .await
 }
 
 /// A single (event_id, channel_id?, created_at) record used by
@@ -613,18 +636,20 @@ pub async fn read_unindexed_observer_rows(
 ) -> Result<Vec<RawObserverRow>, String> {
     let identity_pk = identity_pubkey(&state)?;
     let relay_url = relay_ws_url_with_override(&state);
-    run_archive_db_task(move |conn| {
-        let rows = store::read_unindexed_observer_rows(conn, &identity_pk, &relay_url)?;
-        Ok(rows
-            .into_iter()
-            .map(|(id, raw_json, created_at)| RawObserverRow {
-                id,
-                raw_json,
-                created_at,
-            })
-            .collect())
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            let rows = store::read_unindexed_observer_rows(conn, &identity_pk, &relay_url)?;
+            Ok(rows
+                .into_iter()
+                .map(|(id, raw_json, created_at)| RawObserverRow {
+                    id,
+                    raw_json,
+                    created_at,
+                })
+                .collect())
+        })
+        .await
 }
 
 /// Wire type returned by `read_unindexed_observer_rows`.
@@ -669,20 +694,22 @@ pub async fn read_archived_events(
     let relay_url = relay_ws_url_with_override(&state);
     let scope_type_str = scope_type.as_str().to_string();
     let read_limit = limit.unwrap_or(DEFAULT_READ_LIMIT);
-    run_archive_db_task(move |conn| {
-        store::read_archived_events(
-            conn,
-            &identity_pk,
-            &relay_url,
-            &scope_type_str,
-            &scope_value,
-            kinds.as_deref(),
-            before_created_at,
-            before_id.as_deref(),
-            read_limit,
-        )
-    })
-    .await
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            store::read_archived_events(
+                conn,
+                &identity_pk,
+                &relay_url,
+                &scope_type_str,
+                &scope_value,
+                kinds.as_deref(),
+                before_created_at,
+                before_id.as_deref(),
+                read_limit,
+            )
+        })
+        .await
 }
 
 // ── get_agent_usage_series ───────────────────────────────────────────────────
@@ -771,7 +798,98 @@ pub async fn get_agent_usage_series(
 ) -> Result<agent_usage::AgentUsageSeries, String> {
     let identity_pk = identity_pubkey(&state)?;
     let relay_url = relay_ws_url_with_override(&state);
-    run_archive_db_task(move |conn| agent_usage_series(conn, &identity_pk, &relay_url, &request))
+    state
+        .archive_db
+        .with_conn(move |conn| agent_usage_series(conn, &identity_pk, &relay_url, &request))
+        .await
+}
+
+// ── Retention policy commands ─────────────────────────────────────────────────
+
+/// Set (create or replace) the retention policy for one `(scope, kind)` of the
+/// active identity + relay.
+///
+/// Identity and relay are derived server-side — never trusted from the
+/// frontend. `days` is `None` for Forever or a bounded positive count; the
+/// store layer fail-closes on zero, negative, or out-of-range values (see
+/// [`retention::validate_days`]). This is a single idempotent upsert, atomic
+/// under autocommit; no default seeding occurs here (an explicit user choice is
+/// exactly what this writes).
+#[tauri::command]
+pub async fn set_save_subscription_retention(
+    state: State<'_, AppState>,
+    scope_type: ScopeType,
+    scope_value: String,
+    kind: u32,
+    days: Option<i64>,
+) -> Result<(), String> {
+    if kind > u32::from(u16::MAX) {
+        return Err(format!("kind {kind} is out of the valid range 0..=65535"));
+    }
+    let identity_pk = identity_pubkey(&state)?;
+    let relay_url = relay_ws_url_with_override(&state);
+    let now = now_secs();
+    let scope_type_str = scope_type.as_str().to_string();
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            retention::set_policy(
+                conn,
+                &identity_pk,
+                &relay_url,
+                &scope_type_str,
+                &scope_value,
+                i64::from(kind),
+                days,
+                now,
+            )
+        })
+        .await
+}
+
+/// List every retention policy for the active identity + relay, each tagged
+/// `active` (a live subscription still lists the kind) or orphaned (the kind
+/// was disabled or the subscription deleted, but the policy keeps expiring its
+/// historical data). Independent of the live subscription rows.
+#[tauri::command]
+pub async fn list_retention_policies(
+    state: State<'_, AppState>,
+) -> Result<Vec<retention::RetentionPolicyStatus>, String> {
+    let identity_pk = identity_pubkey(&state)?;
+    let relay_url = relay_ws_url_with_override(&state);
+    state
+        .archive_db
+        .with_conn(move |conn| retention::list_policies(conn, &identity_pk, &relay_url))
+        .await
+}
+
+/// Delete a retention policy for one `(scope, kind)` of the active identity +
+/// relay. Returns `true` if a row was removed. This is the ONLY path that
+/// removes a policy — disabling a kind or deleting a subscription never does.
+/// Remaining historical data for the tuple then becomes ungoverned (Forever)
+/// until an explicit purge (Phase 2+).
+#[tauri::command]
+pub async fn delete_retention_policy(
+    state: State<'_, AppState>,
+    scope_type: ScopeType,
+    scope_value: String,
+    kind: u32,
+) -> Result<bool, String> {
+    let identity_pk = identity_pubkey(&state)?;
+    let relay_url = relay_ws_url_with_override(&state);
+    let scope_type_str = scope_type.as_str().to_string();
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            retention::delete_policy(
+                conn,
+                &identity_pk,
+                &relay_url,
+                &scope_type_str,
+                &scope_value,
+                i64::from(kind),
+            )
+        })
         .await
 }
 
