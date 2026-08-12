@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -240,8 +241,33 @@ void main() {
         find.byKey(const Key('protect-sensitive-actions-checkbox')),
       );
       expect(checkbox.value, isTrue);
-      expect(find.text('Use device authentication'), findsOneWidget);
+      expect(find.text('Use biometrics'), findsOneWidget);
       expect(find.text('For secure actions'), findsOneWidget);
+    });
+
+    testWidgets('uses the native Face ID label on iOS', (tester) async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              pairingProvider.overrideWith(
+                () => _ConfirmingSasPairingNotifier(),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.dark(),
+              home: const PairingPage(),
+            ),
+          ),
+        );
+
+        expect(find.text('Use Face ID'), findsOneWidget);
+        expect(find.text('Use biometrics'), findsNothing);
+      } finally {
+        debugDefaultTargetPlatformOverride = previousPlatform;
+      }
     });
 
     testWidgets('desktop recovery does not show protection checkbox', (

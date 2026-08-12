@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -289,7 +290,11 @@ class _SasVerificationView extends StatelessWidget {
                 : (value) => onProtectionChanged(value ?? false),
             controlAffinity: ListTileControlAffinity.leading,
             contentPadding: EdgeInsets.zero,
-            title: const Text('Use device authentication'),
+            title: Text(
+              defaultTargetPlatform == TargetPlatform.iOS
+                  ? 'Use Face ID'
+                  : 'Use biometrics',
+            ),
             subtitle: const Text('For secure actions'),
           ),
 
