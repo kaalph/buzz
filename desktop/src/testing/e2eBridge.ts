@@ -61,6 +61,10 @@ import type {
   RawInstallRuntimeResult,
   RuntimeFileConfigSubset,
 } from "@/shared/api/tauri";
+import {
+  ensureRelayOriginFetch,
+  resetMediaCaches,
+} from "@/shared/lib/mediaUrl";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   isValidLinkPreviewSnapshotCanonicalUrl,
@@ -318,6 +322,8 @@ type E2eConfig = {
     applyCommunityDelayMs?: number;
     openDmDelayMs?: number;
     sendMessageDelayMs?: number;
+    /** Hold the media proxy at port 0 until the E2E release seam is invoked. */
+    mediaProxyInitiallyUnavailable?: boolean;
     /** Hold mock send live echoes until the E2E release seam is invoked. */
     deferSendMessageLiveEcho?: boolean;
     /** Close the first channel-window live REQ; its retry is accepted. */
@@ -1101,6 +1107,8 @@ declare global {
       command: string;
       payload: unknown;
     }>;
+    /** Release a mock media proxy held at port 0 and return its ready port. */
+    __BUZZ_E2E_RELEASE_MEDIA_PROXY__?: () => number;
     /** Release mock send events that were stored but withheld from live subscribers. */
     __BUZZ_E2E_RELEASE_SEND_MESSAGE_LIVE_ECHO__?: () => number;
     __BUZZ_E2E_EMIT_MEDIA_UPLOAD_PHASE__?: (input: {
@@ -1340,6 +1348,7 @@ declare global {
     __BUZZ_E2E_MUTATE_CHANNEL__?: (opts: {
       channelId: string;
       channelType?: "stream" | "forum" | "dm";
+      description?: string;
       removeMemberPubkey?: string;
     }) => void;
     /**
@@ -1390,6 +1399,7 @@ const CHANNEL_WINDOW_AUX_DELETION_KINDS = new Set([
 // in e2e (instead of the `buzz-media://` fallback). The reaction guard
 // asserts against this exact port.
 const MOCK_MEDIA_PROXY_PORT = 54321;
+let mockMediaProxyPort = MOCK_MEDIA_PROXY_PORT;
 
 // A relay-hosted custom emoji used by the reaction guard. Its URL matches
 // `rewriteRelayUrl()`'s `/media/{64-hex}.{ext}` pattern on the relay origin, so
@@ -5686,6 +5696,19 @@ async function submitSignedEvent(
   });
 }
 
+/** Build the channel-id → last-message-at map from the returned channel list. */
+function buildLastMessages(
+  channels: Array<{ id: string; last_message_at: string | null }>,
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const ch of channels) {
+    if (ch.last_message_at !== null) {
+      map[ch.id] = ch.last_message_at;
+    }
+  }
+  return map;
+}
+
 async function handleGetChannels(config: E2eConfig | undefined) {
   const channelsReadDelayMs = config?.mock?.channelsReadDelayMs ?? 0;
   if (channelsReadDelayMs > 0) {
@@ -5703,7 +5726,17 @@ async function handleGetChannels(config: E2eConfig | undefined) {
 
   const identity = getIdentity(config);
   if (!identity) {
-    return listMockChannels(config);
+    // The hash is constant ("mock-hash") and channels are always returned in
+    // full — the not-modified short-circuit is intentionally never exercised
+    // here: mock channel data mutates during tests (last_message_at updates on
+    // message emission) while the hash never changes, so honoring knownHash
+    // would wrongly short-circuit after mutations.
+    const channels = listMockChannels(config);
+    return {
+      hash: "mock-hash",
+      channels,
+      last_messages: buildLastMessages(channels),
+    };
   }
 
   // Pure Nostr: query kind:39002 (membership) for our pubkey, extract channel
@@ -5749,7 +5782,7 @@ async function handleGetChannels(config: E2eConfig | undefined) {
   );
 
   // Convert kind:39000 events to the RawChannel shape the frontend expects.
-  return metaEvents
+  const channels = metaEvents
     .map((ev) => {
       const tags = (ev.tags ?? []) as string[][];
       const getTag = (name: string) =>
@@ -5792,6 +5825,12 @@ async function handleGetChannels(config: E2eConfig | undefined) {
       };
     })
     .filter((c) => c.channel_type !== "dm" || !hiddenDms.has(c.id));
+
+  return {
+    hash: "mock-hash",
+    channels,
+    last_messages: buildLastMessages(channels),
+  };
 }
 
 async function handleGetProfile(config: E2eConfig | undefined) {
@@ -10102,6 +10141,15 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_COMMANDS__ = [];
   window.__BUZZ_E2E_COMMAND_PAYLOADS__ = [];
   window.__BUZZ_E2E_COMMAND_LOG__ = [];
+  mockMediaProxyPort = config.mock?.mediaProxyInitiallyUnavailable
+    ? 0
+    : MOCK_MEDIA_PROXY_PORT;
+  window.__BUZZ_E2E_RELEASE_MEDIA_PROXY__ = () => {
+    mockMediaProxyPort = MOCK_MEDIA_PROXY_PORT;
+    resetMediaCaches();
+    ensureRelayOriginFetch();
+    return mockMediaProxyPort;
+  };
   window.__BUZZ_E2E_EMIT_MOCK_HUDDLE_TTS_SPEAKER__ = (payload) =>
     emit("huddle-tts-speaker-level", payload);
   window.__BUZZ_E2E_SIGNED_EVENTS__ = [];
@@ -10231,12 +10279,16 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_MUTATE_CHANNEL__ = ({
     channelId,
     channelType,
+    description,
     removeMemberPubkey,
   }) => {
     const channel = mockChannels.find((ch) => ch.id === channelId);
     if (!channel) return;
     if (channelType !== undefined) {
       channel.channel_type = channelType;
+    }
+    if (description !== undefined) {
+      channel.description = description;
     }
     if (removeMemberPubkey !== undefined) {
       channel.members = channel.members.filter(
@@ -12662,7 +12714,7 @@ export function maybeInstallE2eTauriMocks() {
           activeConfig,
         );
       case "get_media_proxy_port":
-        return MOCK_MEDIA_PROXY_PORT;
+        return mockMediaProxyPort;
       case "pick_and_upload_media":
         return await resolveMockUploadDescriptors(activeConfig);
       case "pick_and_upload_image":

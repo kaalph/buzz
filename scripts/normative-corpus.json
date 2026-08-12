@@ -559,7 +559,7 @@
     "id": "dbv2-consolidated-llama-not-sol",
     "provider": "databricks_v2",
     "raw_model_id": "consolidated-llama",
-    "_note": "segment test: 'sol' is a SUBSTRING of 'consolidated' — must NOT match DATABRICKS_V2_OPENAI_CODE_NAMES 'sol'. Falls through to mlflow-chat.",
+    "_note": "segment test: 'sol' is a SUBSTRING of 'consolidated', not a boundary-aligned family token (family_tokens: claude-, gpt-) — no family-rule match. Falls through to databricks_v2 concrete-unknown → mlflow-chat.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
