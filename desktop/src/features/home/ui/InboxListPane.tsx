@@ -13,6 +13,7 @@ import {
   DraftsPanel,
   type DraftViewItem,
 } from "@/features/messages/ui/DraftsPanel";
+import { MessageAuthorText } from "@/features/messages/ui/MessageHeader";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import type { Reminder } from "@/features/reminders/lib/reminderTypes";
 import { isDue } from "@/features/reminders/lib/reminderFilters";
@@ -351,7 +352,7 @@ export function InboxListPane({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-start gap-2">
                 <span
-                  className="flex min-w-0 flex-1 items-start leading-4"
+                  className="flex min-w-0 flex-1 items-start leading-message-author"
                   data-inbox-profile-trigger="true"
                 >
                   <UserProfilePopover
@@ -360,14 +361,14 @@ export function InboxListPane({
                     role={profileRole}
                     triggerElement="span"
                   >
-                    <span className="block max-w-full truncate rounded text-sm font-semibold leading-4 text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
+                    <MessageAuthorText className="block max-w-full">
                       {item.senderLabel}
-                    </span>
+                    </MessageAuthorText>
                   </UserProfilePopover>
                 </span>
                 <span
                   className={cn(
-                    "flex shrink-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground/70 transition-opacity group-hover/inbox-item:opacity-0 group-focus-within/inbox-item:opacity-0",
+                    "flex shrink-0 items-center gap-1.5 text-message-timestamp text-muted-foreground/70 transition-opacity group-hover/inbox-item:opacity-0 group-focus-within/inbox-item:opacity-0",
                     isDone ? "font-normal" : "font-medium",
                   )}
                 >
@@ -402,14 +403,14 @@ export function InboxListPane({
 
               <div
                 className={cn(
-                  "mt-1.5 text-sm leading-5 [&_a]:font-medium [&_a]:text-current",
+                  "mt-1.5 text-message [&_a]:font-medium [&_a]:text-current",
                   isDone
                     ? "font-normal text-muted-foreground"
                     : "font-semibold text-foreground",
                 )}
               >
                 <Markdown
-                  className="inbox-preview-markdown text-inherit leading-5"
+                  className="inbox-preview-markdown text-inherit"
                   content={item.preview}
                   interactive={false}
                   mentionNames={item.mentionNames}

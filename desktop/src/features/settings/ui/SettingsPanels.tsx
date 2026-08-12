@@ -55,6 +55,7 @@ import {
 import { appearanceCommunityLabel } from "../lib/appearanceScopeCopy";
 import {
   AccentPickerContent,
+  ConversationDensitySetting,
   GlassBackgroundSetting,
   LinkPreviewStyleSetting,
   ProminentActiveTabSetting,
@@ -70,6 +71,7 @@ import { NotificationSettingsCard } from "./NotificationSettingsCard";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { HostedCommunitiesSettingsCard } from "./HostedCommunitiesSettingsCard";
 import { SettingsOptionGroup, SettingsOptionRow } from "./SettingsOptionGroup";
+import { SettingsSegmentedControl } from "./SettingsSegmentedControl";
 import { ProfileSettingsCard } from "./ProfileSettingsCard";
 import { UpdateChecker } from "../UpdateChecker";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
@@ -395,9 +397,9 @@ function SingleThemeTile({
 type AppearanceMode = "system" | "light" | "dark";
 
 const APPEARANCE_MODE_OPTIONS = [
-  { mode: "system" as const, label: "System", Icon: SunMoon },
-  { mode: "light" as const, label: "Light", Icon: Sun },
-  { mode: "dark" as const, label: "Dark", Icon: Moon },
+  { value: "system" as const, label: "System", Icon: SunMoon },
+  { value: "light" as const, label: "Light", Icon: Sun },
+  { value: "dark" as const, label: "Dark", Icon: Moon },
 ] as const;
 
 // Reveal/hide motion for the accent picker: a small translate + opacity fade.
@@ -670,39 +672,15 @@ function ThemeSettingsCard() {
                 Follow your system or choose a light or dark appearance.
               </p>
             </div>
-            <fieldset
-              className="relative isolate grid h-8 w-[15rem] shrink-0 grid-cols-3 overflow-hidden rounded-md bg-muted/45 p-0.5"
-              data-testid="appearance-color-mode-control"
-            >
-              <legend className="sr-only">Color mode</legend>
-              <div
-                aria-hidden="true"
-                className="absolute bottom-0.5 left-0.5 top-0.5 z-0 rounded-md bg-background shadow-sm transition-transform duration-[250ms] ease-out motion-reduce:transition-none"
-                data-testid="appearance-color-mode-indicator"
-                style={{
-                  transform: `translateX(${APPEARANCE_MODE_OPTIONS.findIndex((option) => option.mode === selectedMode) * 100}%)`,
-                  width: "calc((100% - 4px) / 3)",
-                }}
-              />
-              {APPEARANCE_MODE_OPTIONS.map(({ mode, label, Icon }) => (
-                <button
-                  aria-pressed={selectedMode === mode}
-                  className={cn(
-                    "relative z-10 flex h-full items-center justify-center gap-1.5 rounded-md bg-transparent px-2.5 text-xs font-medium transition-colors duration-[250ms] ease-out focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
-                    selectedMode === mode
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  data-testid={`appearance-mode-${mode}`}
-                  key={mode}
-                  onClick={() => handleModeSelect(mode)}
-                  type="button"
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  {label}
-                </button>
-              ))}
-            </fieldset>
+            <SettingsSegmentedControl
+              indicatorTestId="appearance-color-mode-indicator"
+              legend="Color mode"
+              onValueChange={handleModeSelect}
+              optionTestIdPrefix="appearance-mode"
+              options={APPEARANCE_MODE_OPTIONS}
+              testId="appearance-color-mode-control"
+              value={selectedMode}
+            />
           </SettingsOptionRow>
 
           <SettingsOptionRow data-testid="theme-style-row">
@@ -804,6 +782,7 @@ function ThemeSettingsCard() {
           data-testid="appearance-preferences-card"
           title="Preferences"
         >
+          <ConversationDensitySetting />
           <LinkPreviewStyleSetting />
           <ThreadLayoutSetting />
         </SettingsOptionGroup>
