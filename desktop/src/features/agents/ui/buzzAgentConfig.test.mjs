@@ -395,14 +395,15 @@ test("openai gpt-5-pro is not matched by gpt-5 base bucket", () => {
   );
 });
 
-// gpt-5.10 must NOT match gpt-5.1 (digit boundary)
-test("openai gpt-5.10 is not matched by gpt-5.1 token", () => {
-  const { validValues } = getProviderEffortConfig("openai", "gpt-5.10");
-  // gpt-5.10 doesn't match any specific family → falls into unknown table
-  assert.deepEqual(
-    [...validValues],
-    ["none", "minimal", "low", "medium", "high", "xhigh"],
+// gpt-5.10 must NOT match gpt-5.1 (digit boundary), but DOES match the gpt-5
+// base rule at the dot boundary → base table, not the unknown fallback.
+test("openai gpt-5.10 rejects gpt-5.1 at the digit boundary and matches the gpt-5 base rule", () => {
+  const { validValues, defaultValue } = getProviderEffortConfig(
+    "openai",
+    "gpt-5.10",
   );
+  assert.deepEqual([...validValues], ["minimal", "low", "medium", "high"]);
+  assert.equal(defaultValue, "medium");
 });
 
 // ---------------------------------------------------------------------------
@@ -541,12 +542,17 @@ test("databricks v1 routes like openai unknown (no gpt-5 model)", () => {
   assert.equal(defaultValue, "medium");
 });
 
-test("openai-compat returns all-7 with medium default", () => {
+test("openai-compat returns all-except-max with medium default", () => {
+  // openai-compat canonicalizes to openai, whose blank/unknown fallback omits
+  // max (the OpenAI wire route clamps max → xhigh, so the UI stays honest).
   const { validValues, defaultValue } = getProviderEffortConfig(
     "openai-compat",
     "",
   );
-  assert.equal(validValues.length, 7);
+  assert.deepEqual(
+    [...validValues],
+    ["none", "minimal", "low", "medium", "high", "xhigh"],
+  );
   assert.equal(defaultValue, "medium");
 });
 
