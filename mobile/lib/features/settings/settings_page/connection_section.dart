@@ -39,6 +39,8 @@ class _ConnectionSection extends ConsumerWidget {
                 }
                 return;
               }
+              await _waitForResumedFrame();
+              if (!context.mounted) return;
               await Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: identityRecoveryPageBuilder),
               );
@@ -49,6 +51,28 @@ class _ConnectionSection extends ConsumerWidget {
       ],
     );
   }
+}
+
+Future<void> _waitForResumedFrame() async {
+  final binding = WidgetsBinding.instance;
+  if (binding.lifecycleState != AppLifecycleState.resumed) {
+    final resumed = Completer<void>();
+    late final AppLifecycleListener listener;
+    listener = AppLifecycleListener(
+      onResume: () {
+        if (!resumed.isCompleted) resumed.complete();
+      },
+    );
+    if (binding.lifecycleState == AppLifecycleState.resumed) {
+      resumed.complete();
+    }
+    try {
+      await resumed.future;
+    } finally {
+      listener.dispose();
+    }
+  }
+  await binding.endOfFrame;
 }
 
 /// Destructive, so it gets a container of its own rather than sitting at the
