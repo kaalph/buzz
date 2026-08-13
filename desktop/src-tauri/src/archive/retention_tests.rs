@@ -466,6 +466,50 @@ fn test_m4_wrong_index_order_dropped_and_rebuilt() {
     );
 }
 
+#[test]
+fn test_m4_partial_age_index_dropped_and_rebuilt_non_partial() {
+    let db = NamedTempFile::new().unwrap();
+    build_pre_m4_db(db.path());
+    // Precreate the scope-age index with the expected NAME, right table, and
+    // EXACT key order — but a `WHERE` predicate making it PARTIAL. It holds the
+    // right columns, so `pragma_index_info` (key columns only) cannot tell it
+    // apart from the required index; only the partiality probe catches it. A
+    // partial index cannot serve the unrestricted prune-age range scan, so M4
+    // must treat it like any other wrong shape and rebuild it non-partial.
+    {
+        let conn = Connection::open(db.path()).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE INDEX {SCOPE_AGE_INDEX_NAME}
+                 ON archived_event_scopes
+                    (identity_pubkey, relay_url, scope_type, scope_value, archived_at, id)
+                 WHERE archived_at > 1000;"
+        ))
+        .unwrap();
+        // The validator must reject the partial index BEFORE M4 runs — this is
+        // the exact check that fails without the partiality probe.
+        assert!(
+            !scope_age_index_is_correct(&conn).unwrap(),
+            "a partial index with correct columns must not be certified"
+        );
+    }
+    // M4 rebuilds the partial index into a non-partial one, then the marker lands.
+    let conn = fresh(&db);
+    assert_eq!(m4_marker_count(&conn), 1, "M4 completes after the rebuild");
+    assert!(
+        scope_age_index_is_correct(&conn).unwrap(),
+        "the index was rebuilt non-partial with the correct key order"
+    );
+    // Prove the rebuilt index carries no `WHERE` predicate.
+    let partial: i64 = conn
+        .query_row(
+            "SELECT partial FROM pragma_index_list('archived_event_scopes') WHERE name = ?1",
+            params![SCOPE_AGE_INDEX_NAME],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(partial, 0, "the rebuilt index must not be partial");
+}
+
 // ── Concurrency ───────────────────────────────────────────────────────────────
 
 #[test]

@@ -139,8 +139,9 @@ fn table_shape_matches(
 
 /// Whether the scope-age index exists on `archived_event_scopes` with exactly
 /// the expected key columns in order. False when the index is absent, sits on
-/// the wrong table, or indexes the wrong columns — all of which M4 repairs by
-/// dropping and recreating it (an index carries no data, so a rebuild is safe).
+/// the wrong table, indexes the wrong columns, or is partial (carries a `WHERE`
+/// predicate) — all of which M4 repairs by dropping and recreating it (an index
+/// carries no data, so a rebuild is safe).
 pub(super) fn scope_age_index_is_correct(conn: &Connection) -> Result<bool, String> {
     let table: Option<String> = conn
         .query_row(
@@ -151,6 +152,27 @@ pub(super) fn scope_age_index_is_correct(conn: &Connection) -> Result<bool, Stri
         .optional()
         .map_err(|e| format!("shape check: scope-age index table: {e}"))?;
     if table.as_deref() != Some("archived_event_scopes") {
+        return Ok(false);
+    }
+
+    // A partial index — one carrying a `WHERE` predicate — can hold the exact
+    // expected key columns yet still fail to serve the unrestricted scope-age
+    // range scan the prune query needs (SQLite falls back to the PK autoindex).
+    // `pragma_index_info` reports key columns but NOT partiality, so probe
+    // `pragma_index_list`'s `partial` flag explicitly and treat a partial index
+    // like any other wrong shape (drop + rebuild non-partial). Absent from the
+    // list (should not happen after the table check above) fails closed.
+    let is_partial = conn
+        .query_row(
+            "SELECT partial FROM pragma_index_list('archived_event_scopes') WHERE name = ?1",
+            params![SCOPE_AGE_INDEX_NAME],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|e| format!("shape check: scope-age index partiality: {e}"))?
+        .map(|p| p != 0)
+        .unwrap_or(true);
+    if is_partial {
         return Ok(false);
     }
 
