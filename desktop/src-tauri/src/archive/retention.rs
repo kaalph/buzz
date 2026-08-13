@@ -92,16 +92,24 @@ const RETENTION_POLICIES_SHAPE: &[ColumnShape] = &[
 /// carries `not_null = false` with `pk_position = 1`.
 const ARCHIVE_META_SHAPE: &[ColumnShape] = &[("key", "TEXT", false, 1), ("value", "TEXT", true, 0)];
 
+/// One key column's expected shape: `(name, collation, descending)`. The
+/// age-range seek needs binary-ordered ascending keys; a differing collation
+/// (e.g. `NOCASE`) or sort direction produces an index the prune query planner
+/// will not use even when the column names match.
+type IndexKeyShape = (&'static str, &'static str, bool);
+
 /// Expected key columns of [`SCOPE_AGE_INDEX_NAME`] in seqno order — the
 /// age-range access path Phase 2 depends on. Order is load-bearing: a covering
-/// seek needs the scope keys before `archived_at`.
-const SCOPE_AGE_INDEX_SHAPE: &[&str] = &[
-    "identity_pubkey",
-    "relay_url",
-    "scope_type",
-    "scope_value",
-    "archived_at",
-    "id",
+/// seek needs the scope keys before `archived_at`. Collation and direction are
+/// load-bearing too: [`SCOPE_AGE_INDEX_DDL`] declares every key `BINARY`
+/// ascending (SQLite's defaults), and only a matching shape serves the seek.
+const SCOPE_AGE_INDEX_SHAPE: &[IndexKeyShape] = &[
+    ("identity_pubkey", "BINARY", false),
+    ("relay_url", "BINARY", false),
+    ("scope_type", "BINARY", false),
+    ("scope_value", "BINARY", false),
+    ("archived_at", "BINARY", false),
+    ("id", "BINARY", false),
 ];
 
 // ── Shape validation (used by migration M4) ────────────────────────────────────
@@ -138,10 +146,11 @@ fn table_shape_matches(
 }
 
 /// Whether the scope-age index exists on `archived_event_scopes` with exactly
-/// the expected key columns in order. False when the index is absent, sits on
-/// the wrong table, indexes the wrong columns, or is partial (carries a `WHERE`
-/// predicate) — all of which M4 repairs by dropping and recreating it (an index
-/// carries no data, so a rebuild is safe).
+/// the expected key columns — name, collation, and sort direction — in order.
+/// False when the index is absent, sits on the wrong table, indexes the wrong
+/// columns, applies a non-`BINARY` collation or descending order to any key, or
+/// is partial (carries a `WHERE` predicate) — all of which M4 repairs by
+/// dropping and recreating it (an index carries no data, so a rebuild is safe).
 pub(super) fn scope_age_index_is_correct(conn: &Connection) -> Result<bool, String> {
     let table: Option<String> = conn
         .query_row(
@@ -178,20 +187,22 @@ pub(super) fn scope_age_index_is_correct(conn: &Connection) -> Result<bool, Stri
 
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT name FROM pragma_index_info('{SCOPE_AGE_INDEX_NAME}') ORDER BY seqno"
+            "SELECT name, coll, desc FROM pragma_index_xinfo('{SCOPE_AGE_INDEX_NAME}') \
+             WHERE key = 1 ORDER BY seqno"
         ))
-        .map_err(|e| format!("shape check: prepare index_info: {e}"))?;
-    let columns: Vec<String> = stmt
-        .query_map([], |r| r.get::<_, String>(0))
-        .map_err(|e| format!("shape check: query index_info: {e}"))?
+        .map_err(|e| format!("shape check: prepare index_xinfo: {e}"))?;
+    let keys: Vec<(String, String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(|e| format!("shape check: query index_xinfo: {e}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("shape check: read index_info: {e}"))?;
+        .map_err(|e| format!("shape check: read index_xinfo: {e}"))?;
 
-    Ok(columns.len() == SCOPE_AGE_INDEX_SHAPE.len()
-        && columns
-            .iter()
-            .zip(SCOPE_AGE_INDEX_SHAPE)
-            .all(|(actual, expected)| actual == expected))
+    Ok(keys.len() == SCOPE_AGE_INDEX_SHAPE.len()
+        && keys.iter().zip(SCOPE_AGE_INDEX_SHAPE).all(
+            |((name, coll, desc), (exp_name, exp_coll, exp_desc))| {
+                name == exp_name && coll.eq_ignore_ascii_case(exp_coll) && (*desc != 0) == *exp_desc
+            },
+        ))
 }
 
 /// Validate the COMPLETE expected shape of the M4 objects: both tables' columns

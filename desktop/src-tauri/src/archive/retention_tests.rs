@@ -510,6 +510,58 @@ fn test_m4_partial_age_index_dropped_and_rebuilt_non_partial() {
     assert_eq!(partial, 0, "the rebuilt index must not be partial");
 }
 
+#[test]
+fn test_m4_wrong_collation_age_index_dropped_and_rebuilt_binary() {
+    let db = NamedTempFile::new().unwrap();
+    build_pre_m4_db(db.path());
+    // Precreate the scope-age index with the expected NAME, right table, exact
+    // key order, and non-partial — but `COLLATE NOCASE` on the first key. It
+    // holds the right column names, is non-partial, and passes both the earlier
+    // name/order and partiality probes; only the xinfo collation check catches
+    // it. A NOCASE key makes the binary-equality prune-age query fall back to
+    // the PK autoindex plus a temp B-tree sort, so M4 must rebuild it BINARY.
+    {
+        let conn = Connection::open(db.path()).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE INDEX {SCOPE_AGE_INDEX_NAME}
+                 ON archived_event_scopes
+                    (identity_pubkey COLLATE NOCASE, relay_url, scope_type,
+                     scope_value, archived_at, id);"
+        ))
+        .unwrap();
+        // The validator must reject the NOCASE index BEFORE M4 runs — this is
+        // the exact check that fails without the xinfo collation probe.
+        assert!(
+            !scope_age_index_is_correct(&conn).unwrap(),
+            "an index with a non-BINARY key collation must not be certified"
+        );
+    }
+    // M4 rebuilds the wrong-collation index BINARY, then the marker lands.
+    let conn = fresh(&db);
+    assert_eq!(m4_marker_count(&conn), 1, "M4 completes after the rebuild");
+    assert!(
+        scope_age_index_is_correct(&conn).unwrap(),
+        "the index was rebuilt with BINARY collation on every key"
+    );
+    // Prove every rebuilt key carries the default BINARY collation.
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT coll FROM pragma_index_xinfo('{SCOPE_AGE_INDEX_NAME}') \
+             WHERE key = 1 ORDER BY seqno"
+        ))
+        .unwrap();
+    let colls: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(colls.len(), 6, "all six key columns are indexed");
+    assert!(
+        colls.iter().all(|c| c.eq_ignore_ascii_case("BINARY")),
+        "every rebuilt key uses BINARY collation, got {colls:?}"
+    );
+}
+
 // ── Concurrency ───────────────────────────────────────────────────────────────
 
 #[test]
