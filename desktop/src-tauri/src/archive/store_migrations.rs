@@ -342,10 +342,12 @@ fn migrate_add_cache_write_and_pricing(conn: &Connection) -> Result<(), String> 
 /// committed marker and no-ops. The cheap pre-lock guard keeps steady-state
 /// opens off the write lock entirely (M4 only takes it until the marker lands).
 ///
-/// All DDL is `CREATE ... IF NOT EXISTS` and seeding is `ON CONFLICT DO
-/// NOTHING`, so the whole body is idempotent; the marker is written last inside
-/// the same transaction, so a crash before COMMIT rolls back every object and
-/// the next open re-runs from scratch.
+/// The tables use plain `CREATE TABLE` behind a fail-closed guard (a
+/// pre-existing `retention_policies`/`archive_meta` with no marker is an
+/// externally-created object M4 refuses to certify) and the index is dropped
+/// and recreated unconditionally; seeding is `ON CONFLICT DO NOTHING`. The
+/// marker is written last inside the same transaction, so a crash before COMMIT
+/// rolls back every object and the next open re-runs from scratch.
 fn migrate_add_retention_policies(conn: &Connection) -> Result<(), String> {
     // Cheap pre-lock guard: steady-state opens (marker already present) never
     // take the write lock. The marker is written last in M4's transaction, so
@@ -379,34 +381,43 @@ fn migrate_add_retention_policies_locked(conn: &Connection) -> Result<(), String
         return Ok(());
     }
 
-    // Idempotent DDL — creates any missing objects, repairing a partial state
-    // left by an interrupted earlier run. `IF NOT EXISTS` preserves an object
-    // that already carries the expected name, so it cannot fix a wrong SHAPE —
-    // that is what the explicit validation below is for.
+    // Fail closed on an externally-created table. M4's whole body runs inside
+    // one `BEGIN IMMEDIATE` transaction with the marker written last, and
+    // SQLite DDL is transactional — a crash anywhere rolls the whole thing
+    // back. So no shipped code path can leave either table present without the
+    // marker; the only way to reach here with one already existing is a
+    // hand-edited DB or a foreign tool. Rather than certify a table we did not
+    // create, refuse: roll back with no marker and let a corrected DB re-run.
+    for table in ["retention_policies", "archive_meta"] {
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![table],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(|e| format!("migration M4: probe {table}: {e}"))?
+            > 0;
+        if exists {
+            return Err(format!(
+                "migration M4: {table} already exists without the M4 marker — \
+                 refusing to certify an externally-created table"
+            ));
+        }
+    }
+
     conn.execute_batch(super::retention::RETENTION_SCHEMA)
         .map_err(|e| format!("migration M4: create retention schema: {e}"))?;
 
-    // Repair a missing or wrong-shaped scope-age index by dropping and
-    // recreating it. An index carries no data, so a rebuild is always safe —
-    // unlike a table, whose wrong shape we must reject rather than drop.
-    if !super::retention::scope_age_index_is_correct(conn)? {
-        conn.execute_batch(&format!(
-            "DROP INDEX IF EXISTS {}",
-            super::retention::SCOPE_AGE_INDEX_NAME
-        ))
-        .map_err(|e| format!("migration M4: drop wrong-shaped scope-age index: {e}"))?;
-        conn.execute_batch(super::retention::SCOPE_AGE_INDEX_DDL)
-            .map_err(|e| format!("migration M4: create scope-age index: {e}"))?;
-    }
-
-    // Validate the COMPLETE expected shape (both tables' columns, types,
-    // nullability, and PK positions, plus the index key order) before seeding
-    // or writing the marker. A wrong-shaped named TABLE cannot be auto-repaired
-    // without risking archived data, so it is rejected here and the whole
-    // transaction rolls back with no marker — the next open re-runs M4 once the
-    // schema is corrected. This guarantees the marker never certifies a
-    // half-built or mis-shaped schema that Phase 2 would inherit.
-    super::retention::validate_retention_schema_shape(conn)?;
+    // Unconditionally rebuild the scope-age index. It carries no data, so a
+    // fresh `CREATE` is always correct; dropping any index that happens to
+    // share the name costs one rebuild and needs no shape inspection.
+    conn.execute_batch(&format!(
+        "DROP INDEX IF EXISTS {}",
+        super::retention::SCOPE_AGE_INDEX_NAME
+    ))
+    .map_err(|e| format!("migration M4: drop any pre-existing scope-age index: {e}"))?;
+    conn.execute_batch(super::retention::SCOPE_AGE_INDEX_DDL)
+        .map_err(|e| format!("migration M4: create scope-age index: {e}"))?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

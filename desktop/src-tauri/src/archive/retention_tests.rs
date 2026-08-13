@@ -366,11 +366,15 @@ fn test_m4_malformed_kinds_json_aborts_and_leaves_no_marker_then_recovers() {
 }
 
 #[test]
-fn test_m4_partial_schema_marker_absent_recovers_on_next_open() {
+fn test_m4_preexisting_retention_policies_without_marker_fails_closed() {
     let db = NamedTempFile::new().unwrap();
     build_pre_m4_db(db.path());
-    // Simulate an interrupted earlier run: retention_policies exists but
-    // archive_meta, the age index, and the marker do not.
+    // A `retention_policies` table present without the M4 marker is
+    // unreachable via shipped code — M4 runs the whole body (create tables,
+    // build index, seed, marker) in one transactional `BEGIN IMMEDIATE`, so a
+    // crash rolls back the table too. The only way to reach this state is an
+    // externally-created table. M4 refuses to certify it: it fails closed and
+    // rolls back with no marker rather than adopting a table it did not build.
     {
         let conn = Connection::open(db.path()).unwrap();
         conn.execute_batch(
@@ -382,183 +386,107 @@ fn test_m4_partial_schema_marker_absent_recovers_on_next_open() {
         )
         .unwrap();
     }
-    // The idempotent DDL fills in the missing objects and records the marker.
-    let conn = fresh(&db);
-    assert_eq!(m4_marker_count(&conn), 1);
-    let objects: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE (type = 'table' AND name IN ('retention_policies', 'archive_meta'))
-                OR (type = 'index' AND name = 'idx_archived_event_scopes_age')",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(objects, 3, "partial schema repaired to the full shape");
-}
-
-#[test]
-fn test_m4_wrong_shaped_named_table_rejected_no_marker() {
-    let db = NamedTempFile::new().unwrap();
-    build_pre_m4_db(db.path());
-    // Precreate an `archive_meta` table carrying the expected NAME but the
-    // wrong shape (its required `value` column is missing). `CREATE ... IF NOT
-    // EXISTS` preserves it, so only the explicit shape check can catch it.
-    {
-        let conn = Connection::open(db.path()).unwrap();
-        conn.execute_batch("CREATE TABLE archive_meta (key TEXT PRIMARY KEY);")
-            .unwrap();
-    }
-    // M4 must reject the incompatible named table and roll back with no marker,
-    // rather than certify a table Phase 2 could not use.
     assert!(
         store::open_archive_db(db.path()).is_err(),
-        "M4 must reject a wrong-shaped named archive_meta"
+        "M4 must fail closed on a pre-existing retention_policies"
     );
     let verify = Connection::open(db.path()).unwrap();
     assert_eq!(
         m4_marker_count(&verify),
         0,
-        "no marker may certify the incompatible table"
+        "no marker may certify an externally-created table"
     );
-    // The rollback left the schema untouched: the bad table is still one-column
-    // and retention_policies was never committed.
-    assert!(
-        !scope_age_index_is_correct(&verify).unwrap(),
-        "the index build rolled back with the rest of the transaction"
-    );
-    let value_cols: i64 = verify
+    let archive_meta_exists: bool = verify
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('archive_meta') WHERE name = 'value'",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'archive_meta'",
             [],
-            |r| r.get(0),
+            |r| r.get::<_, i64>(0),
         )
-        .unwrap();
+        .unwrap()
+        > 0;
+    assert!(
+        !archive_meta_exists,
+        "the rollback left no partially-created schema behind"
+    );
+}
+
+#[test]
+fn test_m4_preexisting_archive_meta_without_marker_fails_closed() {
+    let db = NamedTempFile::new().unwrap();
+    build_pre_m4_db(db.path());
+    // Same fail-closed contract, exercised through the second guarded table.
+    // The table's shape is irrelevant — its mere presence without the marker
+    // means M4 did not create it, so M4 refuses rather than adopting it.
+    {
+        let conn = Connection::open(db.path()).unwrap();
+        conn.execute_batch("CREATE TABLE archive_meta (key TEXT PRIMARY KEY);")
+            .unwrap();
+    }
+    assert!(
+        store::open_archive_db(db.path()).is_err(),
+        "M4 must fail closed on a pre-existing archive_meta"
+    );
+    let verify = Connection::open(db.path()).unwrap();
     assert_eq!(
-        value_cols, 0,
-        "the wrong-shaped table was not silently altered"
+        m4_marker_count(&verify),
+        0,
+        "no marker may certify an externally-created table"
     );
-}
-
-#[test]
-fn test_m4_wrong_index_order_dropped_and_rebuilt() {
-    let db = NamedTempFile::new().unwrap();
-    build_pre_m4_db(db.path());
-    // Precreate the scope-age index with the expected NAME on the right table
-    // but the WRONG key order (`archived_at` first). A covering age-range seek
-    // needs the scope keys before `archived_at`, so this order is unusable.
-    {
-        let conn = Connection::open(db.path()).unwrap();
-        conn.execute_batch(&format!(
-            "CREATE INDEX {SCOPE_AGE_INDEX_NAME}
-                 ON archived_event_scopes
-                    (archived_at, identity_pubkey, relay_url, scope_type, scope_value, id);"
-        ))
-        .unwrap();
-    }
-    // M4 rebuilds a wrong-shaped index (safe — an index carries no data) rather
-    // than rejecting, so the open succeeds and the marker lands.
-    let conn = fresh(&db);
-    assert_eq!(m4_marker_count(&conn), 1, "M4 completes after the rebuild");
-    assert!(
-        scope_age_index_is_correct(&conn).unwrap(),
-        "the index was rebuilt into the correct key order"
-    );
-}
-
-#[test]
-fn test_m4_partial_age_index_dropped_and_rebuilt_non_partial() {
-    let db = NamedTempFile::new().unwrap();
-    build_pre_m4_db(db.path());
-    // Precreate the scope-age index with the expected NAME, right table, and
-    // EXACT key order — but a `WHERE` predicate making it PARTIAL. It holds the
-    // right columns, so `pragma_index_info` (key columns only) cannot tell it
-    // apart from the required index; only the partiality probe catches it. A
-    // partial index cannot serve the unrestricted prune-age range scan, so M4
-    // must treat it like any other wrong shape and rebuild it non-partial.
-    {
-        let conn = Connection::open(db.path()).unwrap();
-        conn.execute_batch(&format!(
-            "CREATE INDEX {SCOPE_AGE_INDEX_NAME}
-                 ON archived_event_scopes
-                    (identity_pubkey, relay_url, scope_type, scope_value, archived_at, id)
-                 WHERE archived_at > 1000;"
-        ))
-        .unwrap();
-        // The validator must reject the partial index BEFORE M4 runs — this is
-        // the exact check that fails without the partiality probe.
-        assert!(
-            !scope_age_index_is_correct(&conn).unwrap(),
-            "a partial index with correct columns must not be certified"
-        );
-    }
-    // M4 rebuilds the partial index into a non-partial one, then the marker lands.
-    let conn = fresh(&db);
-    assert_eq!(m4_marker_count(&conn), 1, "M4 completes after the rebuild");
-    assert!(
-        scope_age_index_is_correct(&conn).unwrap(),
-        "the index was rebuilt non-partial with the correct key order"
-    );
-    // Prove the rebuilt index carries no `WHERE` predicate.
-    let partial: i64 = conn
+    // The rollback did not create retention_policies alongside the bad table.
+    let retention_policies_exists: bool = verify
         .query_row(
-            "SELECT partial FROM pragma_index_list('archived_event_scopes') WHERE name = ?1",
-            params![SCOPE_AGE_INDEX_NAME],
-            |r| r.get(0),
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'retention_policies'",
+            [],
+            |r| r.get::<_, i64>(0),
         )
-        .unwrap();
-    assert_eq!(partial, 0, "the rebuilt index must not be partial");
+        .unwrap()
+        > 0;
+    assert!(
+        !retention_policies_exists,
+        "no policy row was seeded and no sibling table was created"
+    );
 }
 
 #[test]
-fn test_m4_wrong_collation_age_index_dropped_and_rebuilt_binary() {
+fn test_m4_preexisting_index_under_name_is_silently_rebuilt() {
     let db = NamedTempFile::new().unwrap();
     build_pre_m4_db(db.path());
-    // Precreate the scope-age index with the expected NAME, right table, exact
-    // key order, and non-partial — but `COLLATE NOCASE` on the first key. It
-    // holds the right column names, is non-partial, and passes both the earlier
-    // name/order and partiality probes; only the xinfo collation check catches
-    // it. A NOCASE key makes the binary-equality prune-age query fall back to
-    // the PK autoindex plus a temp B-tree sort, so M4 must rebuild it BINARY.
+    // Unlike a table (which carries data and is fail-closed), an index carries
+    // no data, so M4 drops any index sharing the name and recreates it
+    // unconditionally — no shape inspection. A bogus pre-existing index under
+    // the name is silently replaced with the correct one and the marker lands.
     {
         let conn = Connection::open(db.path()).unwrap();
         conn.execute_batch(&format!(
-            "CREATE INDEX {SCOPE_AGE_INDEX_NAME}
-                 ON archived_event_scopes
-                    (identity_pubkey COLLATE NOCASE, relay_url, scope_type,
-                     scope_value, archived_at, id);"
+            "CREATE INDEX {SCOPE_AGE_INDEX_NAME} ON archived_event_scopes (id);"
         ))
         .unwrap();
-        // The validator must reject the NOCASE index BEFORE M4 runs — this is
-        // the exact check that fails without the xinfo collation probe.
-        assert!(
-            !scope_age_index_is_correct(&conn).unwrap(),
-            "an index with a non-BINARY key collation must not be certified"
-        );
     }
-    // M4 rebuilds the wrong-collation index BINARY, then the marker lands.
     let conn = fresh(&db);
     assert_eq!(m4_marker_count(&conn), 1, "M4 completes after the rebuild");
-    assert!(
-        scope_age_index_is_correct(&conn).unwrap(),
-        "the index was rebuilt with BINARY collation on every key"
-    );
-    // Prove every rebuilt key carries the default BINARY collation.
+    // The rebuilt index has the six expected key columns in the covering order.
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT coll FROM pragma_index_xinfo('{SCOPE_AGE_INDEX_NAME}') \
+            "SELECT name FROM pragma_index_xinfo('{SCOPE_AGE_INDEX_NAME}') \
              WHERE key = 1 ORDER BY seqno"
         ))
         .unwrap();
-    let colls: Vec<String> = stmt
+    let keys: Vec<String> = stmt
         .query_map([], |r| r.get::<_, String>(0))
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(colls.len(), 6, "all six key columns are indexed");
-    assert!(
-        colls.iter().all(|c| c.eq_ignore_ascii_case("BINARY")),
-        "every rebuilt key uses BINARY collation, got {colls:?}"
+    assert_eq!(
+        keys,
+        [
+            "identity_pubkey",
+            "relay_url",
+            "scope_type",
+            "scope_value",
+            "archived_at",
+            "id"
+        ],
+        "the index was rebuilt with the covering key order"
     );
 }
 

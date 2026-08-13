@@ -12,7 +12,7 @@
 //! the existing `metric_store.rs` / `pipeline.rs` / `store_migrations.rs`
 //! precedent.
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -33,8 +33,11 @@ pub const MAX_RETENTION_DAYS: i64 = 36_500;
 
 /// `retention_policies` + `archive_meta`. Created inside M4 under
 /// `BEGIN IMMEDIATE` (see `store_migrations::migrate_add_retention_policies`).
+/// Plain `CREATE TABLE` (no `IF NOT EXISTS`): M4 creates these once on a DB that
+/// provably has neither table yet (the fail-closed guard rejects a pre-existing
+/// one), so the clause would be dead weight.
 pub(super) const RETENTION_SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS retention_policies (
+CREATE TABLE retention_policies (
     identity_pubkey TEXT NOT NULL,
     relay_url       TEXT NOT NULL,
     scope_type      TEXT NOT NULL,
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS retention_policies (
     PRIMARY KEY (identity_pubkey, relay_url, scope_type, scope_value, kind)
 );
 
-CREATE TABLE IF NOT EXISTS archive_meta (
+CREATE TABLE archive_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
@@ -56,182 +59,19 @@ CREATE TABLE IF NOT EXISTS archive_meta (
 /// one-time cost over the existing 1.3M-row archive is paid behind the init
 /// barrier rather than on the prune hot path). The scope PK
 /// `(identity, relay, id, scope_type, scope_value)` puts `id` before the
-/// scope keys and lacks `archived_at`, so it cannot range-seek by age.
+/// scope keys and lacks `archived_at`, so it cannot range-seek by age. M4
+/// `DROP INDEX IF EXISTS`es under this name and recreates it unconditionally,
+/// so a fresh build is always correct — plain `CREATE INDEX`, no `IF NOT
+/// EXISTS`.
 pub(super) const SCOPE_AGE_INDEX_DDL: &str = "
-CREATE INDEX IF NOT EXISTS idx_archived_event_scopes_age
+CREATE INDEX idx_archived_event_scopes_age
     ON archived_event_scopes
        (identity_pubkey, relay_url, scope_type, scope_value, archived_at, id);
 ";
 
-/// Name of the scope-age index, shared by the DDL, the shape check, and the
-/// M4 drop-and-rebuild repair path.
+/// Name of the scope-age index, shared by the DDL and M4's unconditional
+/// drop-and-rebuild.
 pub(super) const SCOPE_AGE_INDEX_NAME: &str = "idx_archived_event_scopes_age";
-
-// ── Expected schema shape (the single source of truth M4 validates against) ────
-
-/// One column's expected shape: `(name, declared_type, not_null, pk_position)`.
-/// `pk_position` is 0 when the column is not part of the primary key, else its
-/// 1-based position in the PK — this is exactly what `PRAGMA table_info` reports
-/// in its `pk` field, so PK column ORDER is validated, not just membership.
-type ColumnShape = (&'static str, &'static str, bool, i64);
-
-/// Expected `retention_policies` columns in `cid` order. Mirrors
-/// [`RETENTION_SCHEMA`]; a drift here or there is caught by the M4 shape check.
-const RETENTION_POLICIES_SHAPE: &[ColumnShape] = &[
-    ("identity_pubkey", "TEXT", true, 1),
-    ("relay_url", "TEXT", true, 2),
-    ("scope_type", "TEXT", true, 3),
-    ("scope_value", "TEXT", true, 4),
-    ("kind", "INTEGER", true, 5),
-    ("days", "INTEGER", false, 0),
-    ("updated_at", "INTEGER", true, 0),
-];
-
-/// Expected `archive_meta` columns in `cid` order. A `TEXT PRIMARY KEY` is
-/// nullable in SQLite (only `INTEGER PRIMARY KEY` implies NOT NULL), so `key`
-/// carries `not_null = false` with `pk_position = 1`.
-const ARCHIVE_META_SHAPE: &[ColumnShape] = &[("key", "TEXT", false, 1), ("value", "TEXT", true, 0)];
-
-/// One key column's expected shape: `(name, collation, descending)`. The
-/// age-range seek needs binary-ordered ascending keys; a differing collation
-/// (e.g. `NOCASE`) or sort direction produces an index the prune query planner
-/// will not use even when the column names match.
-type IndexKeyShape = (&'static str, &'static str, bool);
-
-/// Expected key columns of [`SCOPE_AGE_INDEX_NAME`] in seqno order — the
-/// age-range access path Phase 2 depends on. Order is load-bearing: a covering
-/// seek needs the scope keys before `archived_at`. Collation and direction are
-/// load-bearing too: [`SCOPE_AGE_INDEX_DDL`] declares every key `BINARY`
-/// ascending (SQLite's defaults), and only a matching shape serves the seek.
-const SCOPE_AGE_INDEX_SHAPE: &[IndexKeyShape] = &[
-    ("identity_pubkey", "BINARY", false),
-    ("relay_url", "BINARY", false),
-    ("scope_type", "BINARY", false),
-    ("scope_value", "BINARY", false),
-    ("archived_at", "BINARY", false),
-    ("id", "BINARY", false),
-];
-
-// ── Shape validation (used by migration M4) ────────────────────────────────────
-
-/// Whether `table`'s live columns exactly match `expected` (name, declared
-/// type, nullability, and PK position, all in `cid` order). `table` is always a
-/// compile-time constant from this module, never user input, so interpolating
-/// it into the table-valued `pragma_table_info` call carries no injection risk.
-fn table_shape_matches(
-    conn: &Connection,
-    table: &str,
-    expected: &[ColumnShape],
-) -> Result<bool, String> {
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT name, type, \"notnull\", pk FROM pragma_table_info('{table}') ORDER BY cid"
-        ))
-        .map_err(|e| format!("shape check: prepare table_info({table}): {e}"))?;
-    let actual: Vec<(String, String, i64, i64)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
-        .map_err(|e| format!("shape check: query table_info({table}): {e}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("shape check: read table_info({table}): {e}"))?;
-
-    Ok(actual.len() == expected.len()
-        && actual.iter().zip(expected).all(
-            |((name, ty, not_null, pk), (exp_name, exp_ty, exp_not_null, exp_pk))| {
-                name == exp_name
-                    && ty.eq_ignore_ascii_case(exp_ty)
-                    && (*not_null != 0) == *exp_not_null
-                    && pk == exp_pk
-            },
-        ))
-}
-
-/// Whether the scope-age index exists on `archived_event_scopes` with exactly
-/// the expected key columns — name, collation, and sort direction — in order.
-/// False when the index is absent, sits on the wrong table, indexes the wrong
-/// columns, applies a non-`BINARY` collation or descending order to any key, or
-/// is partial (carries a `WHERE` predicate) — all of which M4 repairs by
-/// dropping and recreating it (an index carries no data, so a rebuild is safe).
-pub(super) fn scope_age_index_is_correct(conn: &Connection) -> Result<bool, String> {
-    let table: Option<String> = conn
-        .query_row(
-            "SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?1",
-            params![SCOPE_AGE_INDEX_NAME],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|e| format!("shape check: scope-age index table: {e}"))?;
-    if table.as_deref() != Some("archived_event_scopes") {
-        return Ok(false);
-    }
-
-    // A partial index — one carrying a `WHERE` predicate — can hold the exact
-    // expected key columns yet still fail to serve the unrestricted scope-age
-    // range scan the prune query needs (SQLite falls back to the PK autoindex).
-    // `pragma_index_info` reports key columns but NOT partiality, so probe
-    // `pragma_index_list`'s `partial` flag explicitly and treat a partial index
-    // like any other wrong shape (drop + rebuild non-partial). Absent from the
-    // list (should not happen after the table check above) fails closed.
-    let is_partial = conn
-        .query_row(
-            "SELECT partial FROM pragma_index_list('archived_event_scopes') WHERE name = ?1",
-            params![SCOPE_AGE_INDEX_NAME],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()
-        .map_err(|e| format!("shape check: scope-age index partiality: {e}"))?
-        .map(|p| p != 0)
-        .unwrap_or(true);
-    if is_partial {
-        return Ok(false);
-    }
-
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT name, coll, desc FROM pragma_index_xinfo('{SCOPE_AGE_INDEX_NAME}') \
-             WHERE key = 1 ORDER BY seqno"
-        ))
-        .map_err(|e| format!("shape check: prepare index_xinfo: {e}"))?;
-    let keys: Vec<(String, String, i64)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-        .map_err(|e| format!("shape check: query index_xinfo: {e}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("shape check: read index_xinfo: {e}"))?;
-
-    Ok(keys.len() == SCOPE_AGE_INDEX_SHAPE.len()
-        && keys.iter().zip(SCOPE_AGE_INDEX_SHAPE).all(
-            |((name, coll, desc), (exp_name, exp_coll, exp_desc))| {
-                name == exp_name && coll.eq_ignore_ascii_case(exp_coll) && (*desc != 0) == *exp_desc
-            },
-        ))
-}
-
-/// Validate the COMPLETE expected shape of the M4 objects: both tables' columns
-/// (names, types, nullability, PK positions) and the scope-age index's key
-/// order. `CREATE ... IF NOT EXISTS` silently preserves a wrong-shaped object
-/// that already carries the expected name, so name presence alone cannot
-/// certify the schema — a wrong-shaped named table would otherwise let M4 mark
-/// itself applied and hand Phase 2 an unusable table or missing access path.
-/// Called inside M4's `BEGIN IMMEDIATE`; an `Err` rolls the transaction back
-/// with no marker written.
-pub(super) fn validate_retention_schema_shape(conn: &Connection) -> Result<(), String> {
-    if !table_shape_matches(conn, "retention_policies", RETENTION_POLICIES_SHAPE)? {
-        return Err(
-            "migration M4: retention_policies has an unexpected column or primary-key shape"
-                .to_string(),
-        );
-    }
-    if !table_shape_matches(conn, "archive_meta", ARCHIVE_META_SHAPE)? {
-        return Err(
-            "migration M4: archive_meta has an unexpected column or primary-key shape".to_string(),
-        );
-    }
-    if !scope_age_index_is_correct(conn)? {
-        return Err(format!(
-            "migration M4: {SCOPE_AGE_INDEX_NAME} has an unexpected shape after rebuild"
-        ));
-    }
-    Ok(())
-}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
