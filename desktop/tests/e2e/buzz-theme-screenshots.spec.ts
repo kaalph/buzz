@@ -725,9 +725,11 @@ test("app font size and conversation density apply independently", async ({
   await expect(comfortable).toHaveAttribute("aria-pressed", "true");
   await expect(defaultSize).toHaveAttribute("aria-pressed", "true");
   await expect(densityDescription).toHaveText(
-    "Adjust message and paragraph spacing.",
+    "Spacing in channels, threads, DMs, and Inbox",
   );
-  await expect(fontSizeDescription).toHaveText("Adjust text throughout Buzz.");
+  await expect(fontSizeDescription).toHaveText(
+    "Applies to all text, not just messages",
+  );
   await expect.poll(readScale).toEqual({
     authorLineHeight: 17.142857,
     bodyGap: 0.125,

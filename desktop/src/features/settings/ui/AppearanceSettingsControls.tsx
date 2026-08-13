@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { Eye } from "lucide-react";
 import {
   previewThreadViewMode,
   setThreadViewMode,
@@ -82,12 +83,12 @@ const LINK_PREVIEW_STYLE_OPTIONS: {
   {
     value: "compact",
     label: "Compact",
-    description: "Show links as compact horizontal cards",
+    description: "Small cards with a thumbnail",
   },
   {
     value: "rich",
     label: "Rich",
-    description: "Unfurl links with larger images and descriptions",
+    description: "Large previews with images and descriptions",
   },
 ];
 
@@ -168,7 +169,8 @@ function ConversationPreview() {
         className="relative overflow-hidden rounded-xl border border-border/65 bg-transparent"
         data-testid="conversation-preview-surface"
       >
-        <span className="absolute right-3.5 top-3 text-2xs font-medium uppercase tracking-wider text-muted-foreground/55">
+        <span className="absolute right-3.5 top-3 inline-flex items-center gap-1 text-2xs font-medium text-muted-foreground/55">
+          <Eye aria-hidden="true" className="size-3" />
           Preview
         </span>
         <div className="p-4" data-testid="conversation-preview-content">
@@ -212,7 +214,7 @@ export function ConversationDisplaySettings() {
             className="text-sm font-normal text-muted-foreground/70"
             data-settings-subcopy
           >
-            Adjust text throughout Buzz.
+            Applies to all text, not just messages
           </p>
         </div>
         <SettingsSegmentedControl
@@ -233,7 +235,7 @@ export function ConversationDisplaySettings() {
             className="text-sm font-normal text-muted-foreground/70"
             data-settings-subcopy
           >
-            Adjust message and paragraph spacing.
+            Spacing in channels, threads, DMs, and Inbox
           </p>
         </div>
         <SettingsSegmentedControl
@@ -315,7 +317,8 @@ function LinkPreviewSample() {
         className="relative overflow-hidden rounded-xl border border-border/65 bg-transparent"
         data-testid="link-preview-sample-surface"
       >
-        <span className="absolute right-3.5 top-3 text-2xs font-medium uppercase tracking-wider text-muted-foreground/55">
+        <span className="absolute right-3.5 top-3 inline-flex items-center gap-1 text-2xs font-medium text-muted-foreground/55">
+          <Eye aria-hidden="true" className="size-3" />
           Preview
         </span>
         <div className="p-4 pr-24">
@@ -339,7 +342,7 @@ export function LinkPreviewStyleSetting() {
     <div data-testid="link-preview-style-group">
       <SettingsOptionRow>
         <div className="min-w-0">
-          <p className="text-sm font-medium">Links</p>
+          <p className="text-sm font-medium">Link previews</p>
           <p
             className="text-sm font-normal text-muted-foreground/70"
             data-settings-subcopy
@@ -349,7 +352,7 @@ export function LinkPreviewStyleSetting() {
         </div>
         <SettingsSegmentedControl
           className="w-48"
-          legend="Links"
+          legend="Link previews"
           onPreviewChange={previewLinkPreviewStyle}
           onValueChange={setLinkPreviewStyle}
           optionTestIdPrefix="link-preview-style"
@@ -371,7 +374,7 @@ const THREAD_VIEW_MODE_OPTIONS: {
   {
     value: "focus",
     label: "Focus",
-    description: "Threads open over the channel, full width",
+    description: "Threads open over the channel",
   },
   {
     value: "split",
@@ -580,7 +583,8 @@ function ThreadLayoutPreview() {
         className="relative overflow-hidden rounded-xl border border-border/65 bg-transparent"
         data-testid="thread-layout-preview-surface"
       >
-        <span className="absolute right-3.5 top-3 text-2xs font-medium uppercase tracking-wider text-muted-foreground/55">
+        <span className="absolute right-3.5 top-3 inline-flex items-center gap-1 text-2xs font-medium text-muted-foreground/55">
+          <Eye aria-hidden="true" className="size-3" />
           Preview
         </span>
         <div className="p-4 pr-24">
