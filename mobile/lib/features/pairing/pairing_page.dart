@@ -7,6 +7,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../shared/security/sensitive_action_authorizer.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/buzz_loading_indicator.dart';
 import '../../shared/widgets/tappable_flapping_bee.dart';
@@ -37,6 +38,7 @@ class PairingPage extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final pairingState = ref.watch(pairingProvider);
+    final enrolledBiometrics = ref.watch(enrolledBiometricsProvider);
     final codeController = useTextEditingController();
     final fallbackScannerVisible = useState(false);
     final pairingCodeExpanded = useState(false);
@@ -130,6 +132,10 @@ class PairingPage extends HookConsumerWidget {
                     sendsIdentityToDesktop: pairingState.sendsIdentityToDesktop,
                     protectSensitiveActions:
                         pairingState.protectSensitiveActions,
+                    biometricLabel: biometricProtectionLabel(
+                      defaultTargetPlatform,
+                      enrolledBiometrics.value ?? const [],
+                    ),
                     errorMessage: pairingState.errorMessage,
                     onProtectionChanged: (value) => ref
                         .read(pairingProvider.notifier)
@@ -204,6 +210,7 @@ class _SasVerificationView extends StatelessWidget {
   final bool confirmed;
   final bool sendsIdentityToDesktop;
   final bool protectSensitiveActions;
+  final String biometricLabel;
   final String? errorMessage;
   final ValueChanged<bool> onProtectionChanged;
   final VoidCallback onConfirm;
@@ -214,6 +221,7 @@ class _SasVerificationView extends StatelessWidget {
     required this.confirmed,
     required this.sendsIdentityToDesktop,
     required this.protectSensitiveActions,
+    required this.biometricLabel,
     required this.errorMessage,
     required this.onProtectionChanged,
     required this.onConfirm,
@@ -290,11 +298,7 @@ class _SasVerificationView extends StatelessWidget {
                 : (value) => onProtectionChanged(value ?? false),
             controlAffinity: ListTileControlAffinity.leading,
             contentPadding: EdgeInsets.zero,
-            title: Text(
-              defaultTargetPlatform == TargetPlatform.iOS
-                  ? 'Use Face ID'
-                  : 'Use biometrics',
-            ),
+            title: Text(biometricLabel),
             subtitle: const Text('For secure actions'),
           ),
 

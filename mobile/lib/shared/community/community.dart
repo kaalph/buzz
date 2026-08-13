@@ -3,7 +3,7 @@ import 'package:uuid/uuid.dart';
 const _uuid = Uuid();
 const _sentinel = Object();
 
-enum SensitiveActionPolicy { notConfigured, enabled, disabledByUser }
+enum SensitiveActionPolicy { enabled, disabledByUser }
 
 class Community {
   final String id;
@@ -20,7 +20,7 @@ class Community {
     required this.relayUrl,
     this.pubkey,
     this.nsec,
-    this.sensitiveActionPolicy = SensitiveActionPolicy.notConfigured,
+    this.sensitiveActionPolicy = SensitiveActionPolicy.disabledByUser,
     required this.addedAt,
   });
 
@@ -30,7 +30,7 @@ class Community {
     String? pubkey,
     String? nsec,
     SensitiveActionPolicy sensitiveActionPolicy =
-        SensitiveActionPolicy.notConfigured,
+        SensitiveActionPolicy.disabledByUser,
   }) {
     return Community(
       id: _uuid.v4(),
@@ -80,7 +80,7 @@ class Community {
     nsec: json['nsec'] as String?,
     sensitiveActionPolicy: SensitiveActionPolicy.values.firstWhere(
       (value) => value.name == json['sensitiveActionPolicy'],
-      orElse: () => SensitiveActionPolicy.notConfigured,
+      orElse: () => SensitiveActionPolicy.disabledByUser,
     ),
     addedAt: DateTime.parse(json['addedAt'] as String),
   );

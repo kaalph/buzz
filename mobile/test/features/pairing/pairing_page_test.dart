@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:buzz/features/pairing/pairing_page.dart';
 import 'package:buzz/features/pairing/pairing_provider.dart';
+import 'package:buzz/shared/community/community.dart';
+import 'package:buzz/shared/security/sensitive_action_authorizer.dart';
 import 'package:buzz/shared/theme/theme.dart';
 import 'package:buzz/shared/widgets/buzz_loading_indicator.dart';
 import 'package:buzz/shared/widgets/tappable_flapping_bee.dart';
@@ -255,6 +258,9 @@ void main() {
               pairingProvider.overrideWith(
                 () => _ConfirmingSasPairingNotifier(),
               ),
+              enrolledBiometricsProvider.overrideWith(
+                (_) async => const [BiometricType.face],
+              ),
             ],
             child: MaterialApp(
               theme: AppTheme.dark(),
@@ -262,9 +268,39 @@ void main() {
             ),
           ),
         );
+        await tester.pump();
 
         expect(find.text('Use Face ID'), findsOneWidget);
         expect(find.text('Use biometrics'), findsNothing);
+      } finally {
+        debugDefaultTargetPlatformOverride = previousPlatform;
+      }
+    });
+
+    testWidgets('uses the native Touch ID label on iOS', (tester) async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              pairingProvider.overrideWith(
+                () => _ConfirmingSasPairingNotifier(),
+              ),
+              enrolledBiometricsProvider.overrideWith(
+                (_) async => const [BiometricType.fingerprint],
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.dark(),
+              home: const PairingPage(),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('Use Touch ID'), findsOneWidget);
+        expect(find.text('Use Face ID'), findsNothing);
       } finally {
         debugDefaultTargetPlatformOverride = previousPlatform;
       }
@@ -326,7 +362,8 @@ class _ErrorPairingNotifier extends Notifier<PairingState>
       PairingState(status: PairingStatus.error, errorMessage: error);
 
   @override
-  Future<bool> authorizeIdentityExport() async => true;
+  Future<bool> authorizeIdentityExport({required Community community}) async =>
+      true;
 
   @override
   Future<void> pair(String rawInput) async {}
@@ -350,7 +387,8 @@ class _ConnectingPairingNotifier extends Notifier<PairingState>
   PairingState build() => const PairingState(status: PairingStatus.connecting);
 
   @override
-  Future<bool> authorizeIdentityExport() async => true;
+  Future<bool> authorizeIdentityExport({required Community community}) async =>
+      true;
 
   @override
   Future<void> pair(String rawInput) async {}
@@ -376,7 +414,8 @@ class _RecordingPairingNotifier extends Notifier<PairingState>
   PairingState build() => const PairingState();
 
   @override
-  Future<bool> authorizeIdentityExport() async => true;
+  Future<bool> authorizeIdentityExport({required Community community}) async =>
+      true;
 
   @override
   Future<void> pair(String rawInput) async => pairedCodes.add(rawInput);
@@ -408,7 +447,8 @@ class _ConfirmingSasPairingNotifier extends Notifier<PairingState>
   );
 
   @override
-  Future<bool> authorizeIdentityExport() async => true;
+  Future<bool> authorizeIdentityExport({required Community community}) async =>
+      true;
 
   @override
   Future<void> pair(String rawInput) async {}

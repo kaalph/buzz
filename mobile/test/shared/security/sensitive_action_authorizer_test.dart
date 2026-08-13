@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:mocktail/mocktail.dart';
@@ -28,7 +30,7 @@ void main() {
   test('identity authorization retries after system backgrounding', () async {
     final result = await LocalSensitiveActionAuthorizer(
       authentication,
-    ).authorizeIdentityAction();
+    ).authorizeIdentityAction(biometricOnly: false);
 
     expect(result, DeviceAuthResult.success);
     verify(
@@ -82,4 +84,61 @@ void main() {
       ).called(1);
     },
   );
+
+  test('single-flight shares authorization with the same mode', () async {
+    final authorizer = _ControllableAuthorizer();
+    final session = SensitiveActionAuthorizationSession(authorizer);
+
+    final first = session.authorize(biometricOnly: false);
+    final second = session.authorize(biometricOnly: false);
+
+    expect(authorizer.biometricOnlyCalls, [false]);
+    authorizer.completeNext(DeviceAuthResult.success);
+    expect(await first, DeviceAuthResult.success);
+    expect(await second, DeviceAuthResult.success);
+  });
+
+  test('single-flight does not reuse a weaker in-flight mode', () async {
+    final authorizer = _ControllableAuthorizer();
+    final session = SensitiveActionAuthorizationSession(authorizer);
+
+    final passcodeAllowed = session.authorize(biometricOnly: false);
+    final biometricOnly = session.authorize(biometricOnly: true);
+
+    expect(authorizer.biometricOnlyCalls, [false]);
+    authorizer.completeNext(DeviceAuthResult.success);
+    expect(await passcodeAllowed, DeviceAuthResult.success);
+    await Future<void>.delayed(Duration.zero);
+    expect(authorizer.biometricOnlyCalls, [false, true]);
+
+    authorizer.completeNext(DeviceAuthResult.success);
+    expect(await biometricOnly, DeviceAuthResult.success);
+  });
+}
+
+class _ControllableAuthorizer implements SensitiveActionAuthorizer {
+  final biometricOnlyCalls = <bool>[];
+  final _pending = <Completer<DeviceAuthResult>>[];
+
+  void completeNext(DeviceAuthResult result) {
+    _pending.removeAt(0).complete(result);
+  }
+
+  @override
+  Future<DeviceAuthResult> authorizeIdentityAction({
+    required bool biometricOnly,
+  }) {
+    biometricOnlyCalls.add(biometricOnly);
+    final completer = Completer<DeviceAuthResult>();
+    _pending.add(completer);
+    return completer.future;
+  }
+
+  @override
+  Future<DeviceAuthResult> authorizeBiometricProtection() =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<BiometricType>> enrolledBiometrics() =>
+      throw UnimplementedError();
 }

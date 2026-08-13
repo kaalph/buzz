@@ -8,7 +8,9 @@ class _ConnectionSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final config = ref.watch(relayConfigProvider);
+    final authState = ref.watch(authProvider).value;
     final nsec = config.nsec;
+    final community = authState?.community;
 
     return AppListCard(
       label: 'Connection',
@@ -18,7 +20,7 @@ class _ConnectionSection extends ConsumerWidget {
           title: 'Connected to',
           subtitle: config.baseUrl,
         ),
-        if (nsec != null && nsec.isNotEmpty) ...[
+        if (nsec != null && nsec.isNotEmpty && community != null) ...[
           _IdentityRow(nsec: nsec),
           AppListRow(
             icon: LucideIcons.scanQrCode,
@@ -28,7 +30,7 @@ class _ConnectionSection extends ConsumerWidget {
             onTap: () async {
               final authorized = await ref
                   .read(pairingProvider.notifier)
-                  .authorizeIdentityExport();
+                  .authorizeIdentityExport(community: community);
               if (!context.mounted) return;
               if (!authorized) {
                 final message = ref.read(pairingProvider).errorMessage;

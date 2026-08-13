@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
 
@@ -5,9 +6,13 @@ import 'package:local_auth/local_auth.dart';
 enum DeviceAuthResult { success, cancelled, unavailable, lockedOut, failed }
 
 abstract interface class SensitiveActionAuthorizer {
-  Future<DeviceAuthResult> authorizeIdentityAction();
+  Future<DeviceAuthResult> authorizeIdentityAction({
+    required bool biometricOnly,
+  });
 
   Future<DeviceAuthResult> authorizeBiometricProtection();
+
+  Future<List<BiometricType>> enrolledBiometrics();
 }
 
 class LocalSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
@@ -17,10 +22,21 @@ class LocalSensitiveActionAuthorizer implements SensitiveActionAuthorizer {
   final LocalAuthentication _authentication;
 
   @override
-  Future<DeviceAuthResult> authorizeIdentityAction() => _authorize(
+  Future<DeviceAuthResult> authorizeIdentityAction({
+    required bool biometricOnly,
+  }) => _authorize(
     localizedReason: 'Confirm sending your Buzz identity to desktop',
-    biometricOnly: false,
+    biometricOnly: biometricOnly,
   );
+
+  @override
+  Future<List<BiometricType>> enrolledBiometrics() async {
+    try {
+      return await _authentication.getAvailableBiometrics();
+    } catch (_) {
+      return const [];
+    }
+  }
 
   @override
   Future<DeviceAuthResult> authorizeBiometricProtection() async {
@@ -85,24 +101,50 @@ final sensitiveActionAuthorizerProvider = Provider<SensitiveActionAuthorizer>((
   return LocalSensitiveActionAuthorizer();
 });
 
+final enrolledBiometricsProvider = FutureProvider<List<BiometricType>>((ref) {
+  return ref.watch(sensitiveActionAuthorizerProvider).enrolledBiometrics();
+});
+
+String biometricProtectionLabel(
+  TargetPlatform platform,
+  Iterable<BiometricType> enrolledBiometrics,
+) {
+  if (platform == TargetPlatform.iOS) {
+    if (enrolledBiometrics.contains(BiometricType.face)) return 'Use Face ID';
+    if (enrolledBiometrics.contains(BiometricType.fingerprint)) {
+      return 'Use Touch ID';
+    }
+  }
+  return 'Use biometrics';
+}
+
 class SensitiveActionAuthorizationSession {
   SensitiveActionAuthorizationSession(this._authorizer);
 
   final SensitiveActionAuthorizer _authorizer;
   Future<DeviceAuthResult>? _authorizationInFlight;
+  bool? _inFlightBiometricOnly;
 
-  Future<DeviceAuthResult> authorize() async {
+  Future<DeviceAuthResult> authorize({required bool biometricOnly}) async {
     final inFlight = _authorizationInFlight;
-    if (inFlight != null) return inFlight;
+    if (inFlight != null) {
+      if (_inFlightBiometricOnly == biometricOnly) return inFlight;
+      await inFlight;
+      return authorize(biometricOnly: biometricOnly);
+    }
 
-    final authorization = _authorizer.authorizeIdentityAction();
+    final authorization = _authorizer.authorizeIdentityAction(
+      biometricOnly: biometricOnly,
+    );
     _authorizationInFlight = authorization;
+    _inFlightBiometricOnly = biometricOnly;
     try {
       final result = await authorization;
       return result;
     } finally {
       if (identical(_authorizationInFlight, authorization)) {
         _authorizationInFlight = null;
+        _inFlightBiometricOnly = null;
       }
     }
   }

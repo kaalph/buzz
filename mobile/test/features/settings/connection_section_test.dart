@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:buzz/features/pairing/pairing_provider.dart';
 import 'package:buzz/features/settings/settings_page.dart';
+import 'package:buzz/shared/auth/auth.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:buzz/shared/theme/theme.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ void main() {
       WidgetHelpers.testable(
         overrides: [
           relayConfigProvider.overrideWith(_RelayConfigNotifier.new),
+          authProvider.overrideWith(_AuthNotifier.new),
           pairingProvider.overrideWith(() => pairing),
           savedPrefsProvider.overrideWithValue(prefs),
         ],
@@ -34,6 +36,7 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
 
     await tester.tap(find.text('Send identity to desktop'));
     await tester.pump();
@@ -52,14 +55,27 @@ void main() {
   });
 }
 
+class _AuthNotifier extends AuthNotifier {
+  @override
+  Future<AuthState> build() async => AuthState(
+    status: AuthStatus.authenticated,
+    community: Community(
+      id: 'community',
+      name: 'Test',
+      relayUrl: 'https://relay.test',
+      nsec: _RelayConfigNotifier.nsec,
+      addedAt: DateTime.utc(2026),
+    ),
+  );
+}
+
 class _RelayConfigNotifier extends RelayConfigNotifier {
-  static final _nsec = nostr.Keys(
+  static final nsec = nostr.Keys(
     '1111111111111111111111111111111111111111111111111111111111111111',
   ).nsec;
 
   @override
-  RelayConfig build() =>
-      RelayConfig(baseUrl: 'https://relay.test', nsec: _nsec);
+  RelayConfig build() => RelayConfig(baseUrl: 'https://relay.test', nsec: nsec);
 }
 
 class _PairingNotifier extends PairingNotifier {
@@ -71,7 +87,8 @@ class _PairingNotifier extends PairingNotifier {
   PairingState build() => const PairingState();
 
   @override
-  Future<bool> authorizeIdentityExport() => authorization;
+  Future<bool> authorizeIdentityExport({required Community community}) =>
+      authorization;
 
   @override
   void reset() {}

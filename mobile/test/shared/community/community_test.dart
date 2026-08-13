@@ -2,7 +2,7 @@ import 'package:buzz/shared/community/community.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('existing records migrate to not configured protection', () {
+  test('existing records default to device authentication', () {
     final community = Community.fromJson({
       'id': 'one',
       'name': 'Buzz',
@@ -12,7 +12,7 @@ void main() {
 
     expect(
       community.sensitiveActionPolicy,
-      SensitiveActionPolicy.notConfigured,
+      SensitiveActionPolicy.disabledByUser,
     );
   });
 

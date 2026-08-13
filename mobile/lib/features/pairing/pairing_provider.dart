@@ -96,6 +96,8 @@ class PairingNotifier extends Notifier<PairingState> {
   final PairingCredentialValidator? _credentialValidator;
   PairingSocket? _socket;
   Timer? _sessionTimeout;
+  Community? _identityExportCommunity;
+  bool _identityExportBiometricOnly = false;
 
   PairingNotifier({
     PairingSocketFactory? socketFactory,
@@ -133,9 +135,11 @@ class PairingNotifier extends Notifier<PairingState> {
     return _pairLegacy(trimmed);
   }
 
-  Future<bool> authorizeIdentityExport() async {
+  Future<bool> authorizeIdentityExport({required Community community}) async {
     if (state.authorizationInProgress) return false;
 
+    final biometricOnly =
+        community.sensitiveActionPolicy == SensitiveActionPolicy.enabled;
     final pairingGeneration = _pairingGeneration;
     state = state.copyWith(
       authorizationInProgress: true,
@@ -143,7 +147,7 @@ class PairingNotifier extends Notifier<PairingState> {
     );
     final result = await ref
         .read(sensitiveActionAuthorizationSessionProvider)
-        .authorize();
+        .authorize(biometricOnly: biometricOnly);
     if (pairingGeneration != _pairingGeneration) return false;
     if (result != DeviceAuthResult.success) {
       state = state.copyWith(
@@ -153,6 +157,8 @@ class PairingNotifier extends Notifier<PairingState> {
       return false;
     }
 
+    _identityExportCommunity = community;
+    _identityExportBiometricOnly = biometricOnly;
     _identityExportAuthorizedAt = ref.read(identityExportClockProvider)();
     state = state.copyWith(authorizationInProgress: false);
     return true;
@@ -186,6 +192,16 @@ class PairingNotifier extends Notifier<PairingState> {
       return;
     }
 
+    if (_sendIdentityToSource && !_exportIdentityIsCurrent()) {
+      _userConfirmedSas = false;
+      state = state.copyWith(
+        userConfirmedSas: false,
+        errorMessage:
+            'The active community changed. Start identity export again.',
+      );
+      return;
+    }
+
     final authorizedAt = _identityExportAuthorizedAt;
     final elapsed = authorizedAt == null
         ? null
@@ -199,7 +215,7 @@ class PairingNotifier extends Notifier<PairingState> {
       state = state.copyWith(authorizationInProgress: true);
       final result = await ref
           .read(sensitiveActionAuthorizationSessionProvider)
-          .authorize();
+          .authorize(biometricOnly: _identityExportBiometricOnly);
       if (pairingGeneration != _pairingGeneration ||
           !_userConfirmedSas ||
           !_sasConfirmReceived ||
@@ -310,6 +326,8 @@ class PairingNotifier extends Notifier<PairingState> {
     _userConfirmedSas = false;
     _pendingPayload = null;
     _sendIdentityToSource = false;
+    _identityExportCommunity = null;
+    _identityExportBiometricOnly = false;
     _identityExportAuthorizedAt = null;
   }
 
@@ -575,17 +593,28 @@ class PairingNotifier extends Notifier<PairingState> {
     // Otherwise stay in confirmingSas — user must still confirm via confirmSas().
   }
 
+  bool _exportIdentityIsCurrent() {
+    final authorizedCommunity = _identityExportCommunity;
+    final currentConfig = ref.read(relayConfigProvider);
+    return authorizedCommunity != null &&
+        authorizedCommunity.nsec != null &&
+        authorizedCommunity.nsec!.isNotEmpty &&
+        authorizedCommunity.nsec == currentConfig.nsec &&
+        authorizedCommunity.relayUrl == currentConfig.storedOrigin;
+  }
+
   void _sendIdentityPayload() {
-    final nsec = ref.read(relayConfigProvider).nsec;
-    if (nsec == null || nsec.isEmpty) {
-      _sendAbort('protocol_error');
+    if (!_exportIdentityIsCurrent()) {
+      _sendAbort('identity_changed');
       _cleanup();
       state = const PairingState(
         status: PairingStatus.error,
-        errorMessage: 'No identity is available on this phone.',
+        errorMessage:
+            'The active community changed. Start identity export again.',
       );
       return;
     }
+    final nsec = _identityExportCommunity!.nsec!;
     final content = _encryptMessage({
       'type': 'payload',
       'payload_type': 'nsec',
@@ -887,6 +916,7 @@ class PairingNotifier extends Notifier<PairingState> {
       relayUrl: relayUrl,
       pubkey: decoded['pubkey'] as String?,
       nsec: decoded['nsec'] as String?,
+      sensitiveActionPolicy: SensitiveActionPolicy.disabledByUser,
     );
   }
 
