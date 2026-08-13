@@ -379,21 +379,34 @@ fn migrate_add_retention_policies_locked(conn: &Connection) -> Result<(), String
         return Ok(());
     }
 
-    // Idempotent DDL — repairs a partial state left by any interrupted run.
+    // Idempotent DDL — creates any missing objects, repairing a partial state
+    // left by an interrupted earlier run. `IF NOT EXISTS` preserves an object
+    // that already carries the expected name, so it cannot fix a wrong SHAPE —
+    // that is what the explicit validation below is for.
     conn.execute_batch(super::retention::RETENTION_SCHEMA)
         .map_err(|e| format!("migration M4: create retention schema: {e}"))?;
-    conn.execute_batch(super::retention::SCOPE_AGE_INDEX_DDL)
-        .map_err(|e| format!("migration M4: create scope-age index: {e}"))?;
 
-    // Schema-shape recheck: confirm all three objects (two tables + one index)
-    // actually materialized before seeding or writing the marker, so a marker
-    // never certifies a half-built schema.
-    if retention_schema_object_count(conn)? != 3 {
-        return Err(
-            "migration M4: retention schema incomplete after DDL (expected 2 tables + 1 index)"
-                .to_string(),
-        );
+    // Repair a missing or wrong-shaped scope-age index by dropping and
+    // recreating it. An index carries no data, so a rebuild is always safe —
+    // unlike a table, whose wrong shape we must reject rather than drop.
+    if !super::retention::scope_age_index_is_correct(conn)? {
+        conn.execute_batch(&format!(
+            "DROP INDEX IF EXISTS {}",
+            super::retention::SCOPE_AGE_INDEX_NAME
+        ))
+        .map_err(|e| format!("migration M4: drop wrong-shaped scope-age index: {e}"))?;
+        conn.execute_batch(super::retention::SCOPE_AGE_INDEX_DDL)
+            .map_err(|e| format!("migration M4: create scope-age index: {e}"))?;
     }
+
+    // Validate the COMPLETE expected shape (both tables' columns, types,
+    // nullability, and PK positions, plus the index key order) before seeding
+    // or writing the marker. A wrong-shaped named TABLE cannot be auto-repaired
+    // without risking archived data, so it is rejected here and the whole
+    // transaction rolls back with no marker — the next open re-runs M4 once the
+    // schema is corrected. This guarantees the marker never certifies a
+    // half-built or mis-shaped schema that Phase 2 would inherit.
+    super::retention::validate_retention_schema_shape(conn)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -423,20 +436,6 @@ fn retention_migration_applied(conn: &Connection) -> Result<bool, String> {
         )
         .map_err(|e| format!("migration M4: guard check: {e}"))?;
     Ok(count > 0)
-}
-
-/// Count the M4 schema objects present: the `retention_policies` and
-/// `archive_meta` tables plus the `idx_archived_event_scopes_age` index. A
-/// fully-created schema returns 3.
-fn retention_schema_object_count(conn: &Connection) -> Result<i64, String> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master
-         WHERE (type = 'table' AND name IN ('retention_policies', 'archive_meta'))
-            OR (type = 'index' AND name = 'idx_archived_event_scopes_age')",
-        [],
-        |r| r.get(0),
-    )
-    .map_err(|e| format!("migration M4: schema-shape check: {e}"))
 }
 
 /// Seed a default retention policy for every `(subscription, kind)` pair in

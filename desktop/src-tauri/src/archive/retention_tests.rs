@@ -397,6 +397,75 @@ fn test_m4_partial_schema_marker_absent_recovers_on_next_open() {
     assert_eq!(objects, 3, "partial schema repaired to the full shape");
 }
 
+#[test]
+fn test_m4_wrong_shaped_named_table_rejected_no_marker() {
+    let db = NamedTempFile::new().unwrap();
+    build_pre_m4_db(db.path());
+    // Precreate an `archive_meta` table carrying the expected NAME but the
+    // wrong shape (its required `value` column is missing). `CREATE ... IF NOT
+    // EXISTS` preserves it, so only the explicit shape check can catch it.
+    {
+        let conn = Connection::open(db.path()).unwrap();
+        conn.execute_batch("CREATE TABLE archive_meta (key TEXT PRIMARY KEY);")
+            .unwrap();
+    }
+    // M4 must reject the incompatible named table and roll back with no marker,
+    // rather than certify a table Phase 2 could not use.
+    assert!(
+        store::open_archive_db(db.path()).is_err(),
+        "M4 must reject a wrong-shaped named archive_meta"
+    );
+    let verify = Connection::open(db.path()).unwrap();
+    assert_eq!(
+        m4_marker_count(&verify),
+        0,
+        "no marker may certify the incompatible table"
+    );
+    // The rollback left the schema untouched: the bad table is still one-column
+    // and retention_policies was never committed.
+    assert!(
+        !scope_age_index_is_correct(&verify).unwrap(),
+        "the index build rolled back with the rest of the transaction"
+    );
+    let value_cols: i64 = verify
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('archive_meta') WHERE name = 'value'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        value_cols, 0,
+        "the wrong-shaped table was not silently altered"
+    );
+}
+
+#[test]
+fn test_m4_wrong_index_order_dropped_and_rebuilt() {
+    let db = NamedTempFile::new().unwrap();
+    build_pre_m4_db(db.path());
+    // Precreate the scope-age index with the expected NAME on the right table
+    // but the WRONG key order (`archived_at` first). A covering age-range seek
+    // needs the scope keys before `archived_at`, so this order is unusable.
+    {
+        let conn = Connection::open(db.path()).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE INDEX {SCOPE_AGE_INDEX_NAME}
+                 ON archived_event_scopes
+                    (archived_at, identity_pubkey, relay_url, scope_type, scope_value, id);"
+        ))
+        .unwrap();
+    }
+    // M4 rebuilds a wrong-shaped index (safe — an index carries no data) rather
+    // than rejecting, so the open succeeds and the marker lands.
+    let conn = fresh(&db);
+    assert_eq!(m4_marker_count(&conn), 1, "M4 completes after the rebuild");
+    assert!(
+        scope_age_index_is_correct(&conn).unwrap(),
+        "the index was rebuilt into the correct key order"
+    );
+}
+
 // ── Concurrency ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -480,4 +549,157 @@ fn test_concurrent_merge_seeds_both_policies() {
     assert!(sub_kinds.contains(&24200) && sub_kinds.contains(&44200));
     assert_eq!(policy_days(&verify, OBSERVER_FRAME_KIND), Some(30));
     assert_eq!(policy_days(&verify, 44200), None);
+}
+
+/// Deterministic interleaving of merge / remove / set on ONE `(scope, kind)`
+/// across two connections to the same WAL file. Each mutator takes `BEGIN
+/// IMMEDIATE`, so a barrier held before both begin forces them to serialize on
+/// `busy_timeout` rather than race to a `BUSY_SNAPSHOT`. Whichever order the OS
+/// picks, the invariants must hold: the subscription stays valid, the explicit
+/// policy choice set by one thread is never silently reset by the other's
+/// merge-seed (which is `ON CONFLICT DO NOTHING`), and no policy row is deleted
+/// by a `kinds` mutation. Removing the `BEGIN IMMEDIATE` guard from the
+/// mutators makes one contender fail with `BUSY_SNAPSHOT`, tripping this test.
+#[test]
+fn test_concurrent_merge_remove_set_keeps_state_valid_and_choice() {
+    use std::thread;
+    let db = NamedTempFile::new().unwrap();
+    let path = db.path().to_path_buf();
+    // Start from a subscription that already lists 24200 with an EXPLICIT
+    // 7-day policy — the choice both racing threads must not clobber.
+    {
+        let conn = fresh(&db);
+        store::merge_owner_p_kinds(&conn, ID, RELAY, ID, 24200, 100).unwrap();
+        set_policy(&conn, ID, RELAY, OWNER, ID, 24200, Some(7), 100).unwrap();
+    }
+
+    let barrier = Arc::new(Barrier::new(3));
+    // T1: enable a second kind (seeds its default policy).
+    // T2: disable 24200 (removes it from `kinds`, must NOT touch its policy).
+    // T3: re-set 24200's explicit policy to 5 days.
+    let t1 = {
+        let (p, b) = (path.clone(), Arc::clone(&barrier));
+        thread::spawn(move || {
+            let conn = store::open_archive_db(&p).unwrap();
+            b.wait();
+            store::merge_owner_p_kinds(&conn, ID, RELAY, ID, 44200, 200)
+        })
+    };
+    let t2 = {
+        let (p, b) = (path.clone(), Arc::clone(&barrier));
+        thread::spawn(move || {
+            let conn = store::open_archive_db(&p).unwrap();
+            b.wait();
+            store::remove_owner_p_kind(&conn, ID, RELAY, ID, 24200)
+        })
+    };
+    let t3 = {
+        let (p, b) = (path.clone(), Arc::clone(&barrier));
+        thread::spawn(move || {
+            let conn = store::open_archive_db(&p).unwrap();
+            b.wait();
+            set_policy(&conn, ID, RELAY, OWNER, ID, 24200, Some(5), 300)
+        })
+    };
+    assert!(t1.join().unwrap().is_ok(), "concurrent merge must succeed");
+    assert!(t2.join().unwrap().is_ok(), "concurrent remove must succeed");
+    assert!(t3.join().unwrap().is_ok(), "concurrent set must succeed");
+
+    let verify = store::open_archive_db(&path).unwrap();
+    // Subscription is valid JSON and now lists 44200 (added) but not 24200
+    // (removed) — the two `kinds` mutations composed cleanly.
+    let subs = store::list_save_subscriptions(&verify, ID, RELAY).unwrap();
+    assert_eq!(subs.len(), 1, "one owner_p row survives the interleaving");
+    let sub_kinds: Vec<u32> = serde_json::from_str(&subs[0].kinds).unwrap();
+    assert!(sub_kinds.contains(&44200), "the merged kind is present");
+    assert!(!sub_kinds.contains(&24200), "the removed kind is gone");
+    // Both policy rows still exist — no `kinds` mutation deleted one.
+    let policies = list_policies(&verify, ID, RELAY).unwrap();
+    assert_eq!(policies.len(), 2, "both policy rows survive; none deleted");
+    // T3's explicit 5-day choice for 24200 is the final value: T1's default
+    // seed for 44200 never touches 24200, and T2's remove leaves policies
+    // alone, so the observer policy reflects the explicit set, not a reset.
+    assert_eq!(
+        policy_days(&verify, 24200),
+        Some(5),
+        "explicit choice survives the concurrent merge/remove"
+    );
+    assert_eq!(
+        policy_days(&verify, 44200),
+        None,
+        "44200 kept its Forever default"
+    );
+}
+
+/// One evolving state walked through the full policy lifecycle in a single
+/// test: an active observer policy → the kind is disabled (policy orphaned but
+/// preserved) → the whole subscription is deleted (still orphaned) → the orphan
+/// is edited → the orphan is explicitly deleted. This proves the transitions
+/// compose on the SAME rows, which the separate per-transition tests cannot.
+#[test]
+fn test_policy_lifecycle_active_orphaned_edited_deleted_on_one_state() {
+    let db = NamedTempFile::new().unwrap();
+    let conn = fresh(&db);
+
+    // 1. Active: a subscription lists 24200, its policy is the seeded default.
+    create_subscription_with_policies(&conn, ID, RELAY, OWNER, ID, &[24200], "[24200]", 100)
+        .unwrap();
+    let active = list_policies(&conn, ID, RELAY).unwrap();
+    assert_eq!(active.len(), 1);
+    assert!(
+        active[0].active,
+        "policy is active while the kind is listed"
+    );
+    assert_eq!(active[0].days, Some(30), "seeded observer default");
+
+    // 2. Kind disabled: 24200 leaves `kinds`; the policy stays but goes orphaned.
+    store::remove_owner_p_kind(&conn, ID, RELAY, ID, 24200).unwrap();
+    // Removing the last kind deleted the subscription row entirely.
+    assert!(
+        store::list_save_subscriptions(&conn, ID, RELAY)
+            .unwrap()
+            .is_empty(),
+        "the last kind off removes the subscription row"
+    );
+    let disabled = list_policies(&conn, ID, RELAY).unwrap();
+    assert_eq!(disabled.len(), 1, "the policy is preserved, not deleted");
+    assert!(
+        !disabled[0].active,
+        "policy is orphaned once the kind is gone"
+    );
+    assert_eq!(
+        disabled[0].days,
+        Some(30),
+        "it keeps expiring historical data"
+    );
+
+    // 3. Subscription deleted: an explicit delete on an already-absent row is a
+    // no-op; the orphaned policy is unaffected.
+    assert!(
+        !store::delete_save_subscription(&conn, ID, RELAY, OWNER, ID).unwrap(),
+        "no subscription row remains to delete"
+    );
+    let still_orphaned = list_policies(&conn, ID, RELAY).unwrap();
+    assert_eq!(still_orphaned.len(), 1);
+    assert!(!still_orphaned[0].active, "policy remains orphaned");
+
+    // 4. Edit the orphan: a user can still change retention for historical data.
+    set_policy(&conn, ID, RELAY, OWNER, ID, 24200, Some(90), 400).unwrap();
+    let edited = list_policies(&conn, ID, RELAY).unwrap();
+    assert_eq!(edited.len(), 1);
+    assert_eq!(edited[0].days, Some(90), "orphaned policy is editable");
+    assert!(
+        !edited[0].active,
+        "editing does not resurrect the subscription"
+    );
+
+    // 5. Delete the orphan: the only path that removes a policy row.
+    assert!(
+        delete_policy(&conn, ID, RELAY, OWNER, ID, 24200).unwrap(),
+        "the orphaned policy is deleted"
+    );
+    assert!(
+        list_policies(&conn, ID, RELAY).unwrap().is_empty(),
+        "no policy rows remain after the lifecycle completes"
+    );
 }
