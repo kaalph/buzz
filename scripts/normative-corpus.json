@@ -1,7 +1,6 @@
 [
   {
-    "_group": "Anthropic exact family rules",
-    "_note": "All require thinking_mode=manual-budget or adaptive, correct supported_efforts, databricks_v2_wire_route=not-applicable"
+    "_group": "Anthropic curated family-rule model names"
   },
   {
     "id": "anthropic-claude-3-family",
@@ -187,7 +186,7 @@
     }
   },
   {
-    "_group": "Anthropic unknowns and fallbacks"
+    "_group": "Anthropic blank and concrete-unknown inputs"
   },
   {
     "id": "anthropic-unknown-blank",
@@ -228,7 +227,7 @@
     }
   },
   {
-    "_group": "OpenAI exact family rules"
+    "_group": "OpenAI curated family-rule model names"
   },
   {
     "id": "openai-gpt5-pro",
@@ -360,13 +359,13 @@
     }
   },
   {
-    "_group": "OpenAI adversarial — gpt5 boundary-aware matching (ported from config.rs tests)"
+    "_group": "OpenAI gpt-5 boundary-matching probes (ported from config.rs tests)"
   },
   {
-    "id": "openai-gpt5-1106-should-not-match-base",
+    "id": "openai-gpt5-1106-date-suffix-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-1106",
-    "_note": "gpt-5-1106: '-1106' is a 4-digit date segment, NOT a short version (gpt5-base rejects only 1-3 digit suffixes). Must match base table [minimal,low,medium,high], NOT fall through to unknown.",
+    "_note": "Probes a 4-digit date-shaped suffix after the gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -382,10 +381,10 @@
     }
   },
   {
-    "id": "openai-gpt5-4o-matches-base",
+    "id": "openai-gpt5-4o-alpha-suffix-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-4o",
-    "_note": "gpt-5-4o: '4o' after '-' is NOT a short numeric suffix (it contains a letter). Must match gpt5-base. Crucially, must NOT match gpt-5.4 (the '4' is followed by 'o', not boundary char).",
+    "_note": "Probes a leading-digit-then-letter suffix ('4o') after the gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -401,10 +400,10 @@
     }
   },
   {
-    "id": "openai-gpt5-pro-not-matching-gpt5-base",
+    "id": "openai-gpt5-pro-precedence-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-pro",
-    "_note": "gpt-5-pro should hit gpt5-pro rule (priority 20), NOT gpt-5 base.",
+    "_note": "Probes precedence between the gpt-5-pro rule and the gpt-5 base stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -417,10 +416,10 @@
     }
   },
   {
-    "id": "openai-multi-digit-version-gpt5-10",
+    "id": "openai-gpt5-10-multi-digit-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-10",
-    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
+    "_note": "Probes a two-digit minor-version suffix after the gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -436,10 +435,10 @@
     }
   },
   {
-    "id": "openai-gpt5-date-suffix",
+    "id": "openai-gpt5-date-suffix-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-20260101",
-    "_note": "gpt-5-20260101 — long numeric suffix after base: '20260101' is 8 digits, beyond 1-3 digit reject, should hit gpt5-base.",
+    "_note": "Probes an 8-digit date suffix after the gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -455,10 +454,10 @@
     }
   },
   {
-    "_group": "DatabricksV2 — segment-based routing (ported from llm.rs tests)"
+    "_group": "DatabricksV2 segment/prefix routing probes (ported from llm.rs tests)"
   },
   {
-    "id": "dbv2-gpt5-route-openai-responses",
+    "id": "dbv2-gpt5-5-probe",
     "provider": "databricks_v2",
     "raw_model_id": "gpt-5.5",
     "expect": {
@@ -477,7 +476,7 @@
     }
   },
   {
-    "id": "dbv2-claude-route-anthropic-messages",
+    "id": "dbv2-claude-opus-4-7-probe",
     "provider": "databricks_v2",
     "raw_model_id": "claude-opus-4-7",
     "expect": {
@@ -496,10 +495,10 @@
     }
   },
   {
-    "id": "dbv2-claude-prefix-stripped",
+    "id": "dbv2-databricks-prefix-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-claude-opus-4-7",
-    "_note": "databricks- prefix stripped → claude-opus-4-7 → Anthropic route",
+    "_note": "Probes stripping of the databricks- catalog prefix.",
     "expect": {
       "thinking_mode": "adaptive",
       "supported_efforts": [
@@ -516,10 +515,10 @@
     }
   },
   {
-    "id": "dbv2-goose-claude-prefix-stripped",
+    "id": "dbv2-goose-claude-prefix-probe",
     "provider": "databricks_v2",
     "raw_model_id": "goose-claude-fable-5",
-    "_note": "goose- prefix stripped → claude-fable-5 → Anthropic adaptive+xhigh",
+    "_note": "Probes stripping of the goose- catalog prefix.",
     "expect": {
       "thinking_mode": "adaptive",
       "supported_efforts": [
@@ -536,10 +535,10 @@
     }
   },
   {
-    "id": "dbv2-team-prefix-stripped",
+    "id": "dbv2-team-prefix-probe",
     "provider": "databricks_v2",
     "raw_model_id": "team-x-claude-opus-4-7",
-    "_note": "team-x- prefix stripped → claude-opus-4-7 → Anthropic route",
+    "_note": "Probes stripping of a team-x- catalog prefix.",
     "expect": {
       "thinking_mode": "adaptive",
       "supported_efforts": [
@@ -556,10 +555,10 @@
     }
   },
   {
-    "id": "dbv2-consolidated-llama-not-sol",
+    "id": "dbv2-consolidated-llama-substring-probe",
     "provider": "databricks_v2",
     "raw_model_id": "consolidated-llama",
-    "_note": "segment test: 'sol' is a SUBSTRING of 'consolidated', not a boundary-aligned family token (family_tokens: claude-, gpt-) — no family-rule match. Falls through to databricks_v2 concrete-unknown → mlflow-chat.",
+    "_note": "Probes a name where a code word ('sol') appears only as a substring, not a boundary-aligned segment.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -577,10 +576,10 @@
     }
   },
   {
-    "id": "dbv2-terraform-coder-not-terra",
+    "id": "dbv2-terraform-coder-substring-probe",
     "provider": "databricks_v2",
     "raw_model_id": "terraform-coder",
-    "_note": "segment test: 'terra' is a prefix of 'terraform' — must NOT match 'terra' code name. Falls through to mlflow-chat.",
+    "_note": "Probes a name where a code word ('terra') is only a segment prefix, not a full segment.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -598,10 +597,10 @@
     }
   },
   {
-    "id": "dbv2-corpus-reranker-not-opus",
+    "id": "dbv2-corpus-reranker-substring-probe",
     "provider": "databricks_v2",
     "raw_model_id": "corpus-reranker",
-    "_note": "segment test: 'opus' is NOT a segment of corpus-reranker (segments: corpus, reranker). mlflow-chat.",
+    "_note": "Probes a name where 'opus' appears only as a substring of a segment.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -619,10 +618,10 @@
     }
   },
   {
-    "id": "dbv2-octopus-model-not-opus",
+    "id": "dbv2-octopus-model-substring-probe",
     "provider": "databricks_v2",
     "raw_model_id": "octopus-model",
-    "_note": "segment test: 'opus' is not a segment of octopus-model (segments: octopus, model). mlflow-chat.",
+    "_note": "Probes a name where 'opus' appears only as a substring of a segment.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -640,10 +639,10 @@
     }
   },
   {
-    "id": "dbv2-goose-opus-5-is-anthropic",
+    "id": "dbv2-goose-opus-5-prefix-probe",
     "provider": "databricks_v2",
     "raw_model_id": "goose-opus-5",
-    "_note": "[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
+    "_note": "Probes a goose- prefix over a bare code-name segment with no leading claude.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -661,13 +660,13 @@
     }
   },
   {
-    "_group": "P2-A resolver-contract vectors (plan v4 §Resolver contract)"
+    "_group": "Resolver-contract probes (plan v4 §Resolver contract)"
   },
   {
-    "id": "resolver-exact-raw-id-hit",
+    "id": "resolver-exact-raw-id-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-4-mini",
-    "_note": "Exact record exists. Must return exact Databricks override: low|medium|high (not family's none+xhigh).",
+    "_note": "Probes a raw id that has an exact record.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -682,10 +681,10 @@
     }
   },
   {
-    "id": "resolver-prefixed-alias-misses-exact",
+    "id": "resolver-prefixed-alias-probe",
     "provider": "databricks_v2",
     "raw_model_id": "team-x-databricks-gpt-5-4-mini",
-    "_note": "Prefixed alias of an exact ID. Raw exact lookup MUST miss (key is team-x-..., not databricks-...). Falls to family rules (gpt5-4 family → none+xhigh).",
+    "_note": "Probes a prefixed alias of an exact-record id (raw exact key differs).",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -702,10 +701,10 @@
     }
   },
   {
-    "id": "resolver-cross-provider-misses-exact",
+    "id": "resolver-cross-provider-probe",
     "provider": "openai",
     "raw_model_id": "databricks-gpt-5-4-mini",
-    "_note": "Same raw ID but different provider. Exact record is databricks_v2-scoped; must miss. Falls to openai family rules.",
+    "_note": "Probes the same raw id under a different provider (exact records are provider-scoped).",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -722,10 +721,10 @@
     }
   },
   {
-    "id": "resolver-exact-efforts-plus-family-route",
+    "id": "resolver-exact-record-with-family-route-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-6-sol",
-    "_note": "Exact record with efforts from models.dev (low|medium|high|max — provider-advertised, no none/xhigh). Route materialized from gpt5-6 family rule (openai-responses). Must return both, complete.",
+    "_note": "Probes an exact record whose wire route is materialized from its family rule.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -741,10 +740,10 @@
     }
   },
   {
-    "id": "dbv2-gpt5-5-exact-override",
+    "id": "dbv2-gpt5-5-exact-record-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-5",
-    "_note": "Exact record adopts models.dev advertised set [low,medium,high]. Family rule (gpt5-5) has none+xhigh — provider-advertised wins per plan F1.",
+    "_note": "Probes an exact record whose advertised efforts differ from its family rule.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -759,13 +758,13 @@
     }
   },
   {
-    "_group": "Blank vs concrete-unknown per provider (P2-B fallback vectors)"
+    "_group": "Blank and concrete-unknown inputs per provider"
   },
   {
-    "id": "dbv2-blank-all7-route-unknown",
+    "id": "dbv2-blank-probe",
     "provider": "databricks_v2",
     "raw_model_id": "",
-    "_note": "DBv2 blank: route-unknown, all 7 efforts, default medium.",
+    "_note": "Probes a blank databricks_v2 model id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -784,10 +783,10 @@
     }
   },
   {
-    "id": "dbv2-concrete-unknown-mlflow-no-max",
+    "id": "dbv2-concrete-unknown-probe",
     "provider": "databricks_v2",
     "raw_model_id": "some-unknown-model-xyz",
-    "_note": "DBv2 concrete-unknown: mlflow-chat, all-except-max (6 efforts).",
+    "_note": "Probes a concrete, uncatalogued databricks_v2 model id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -805,10 +804,10 @@
     }
   },
   {
-    "id": "openai-blank-all-except-max",
+    "id": "openai-blank-probe",
     "provider": "openai",
     "raw_model_id": "",
-    "_note": "OpenAI blank: not-applicable route, all-except-max, medium default.",
+    "_note": "Probes a blank openai model id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -826,10 +825,10 @@
     }
   },
   {
-    "id": "openai-concrete-unknown-all-except-max",
+    "id": "openai-concrete-unknown-probe",
     "provider": "openai",
     "raw_model_id": "gpt-4o",
-    "_note": "OpenAI concrete unknown (unverified family): not-applicable route, all-except-max, medium default.",
+    "_note": "Probes a concrete openai model id in no verified family.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -847,10 +846,10 @@
     }
   },
   {
-    "id": "anthropic-blank-adaptive-full",
+    "id": "anthropic-blank-probe",
     "provider": "anthropic",
     "raw_model_id": "",
-    "_note": "Anthropic blank: assume adaptive with full support (incl. xhigh).",
+    "_note": "Probes a blank anthropic model id.",
     "expect": {
       "thinking_mode": "adaptive",
       "supported_efforts": [
@@ -867,10 +866,10 @@
     }
   },
   {
-    "id": "anthropic-concrete-unknown-omit-fields",
+    "id": "anthropic-concrete-unknown-probe",
     "provider": "anthropic",
     "raw_model_id": "claude-ultra-9000",
-    "_note": "Anthropic concrete-unknown: omit-fields (never guess request shape).",
+    "_note": "Probes a concrete, uncatalogued anthropic model id.",
     "expect": {
       "thinking_mode": "omit-fields",
       "supported_efforts": [
@@ -887,13 +886,13 @@
     }
   },
   {
-    "_group": "Legacy Databricks provider (P3 effort rules)"
+    "_group": "Legacy Databricks provider inputs"
   },
   {
-    "id": "databricks-gpt5-pro-effort",
+    "id": "databricks-gpt5-pro-probe",
     "provider": "databricks",
     "raw_model_id": "databricks-gpt-5-pro",
-    "_note": "Legacy databricks GPT-5 Pro: same effort set as openai/gpt-5-pro — only [high], default high. Wire route not-applicable.",
+    "_note": "Probes the legacy databricks provider with a GPT-5 Pro id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -906,10 +905,10 @@
     }
   },
   {
-    "id": "databricks-gpt5-6-effort",
+    "id": "databricks-gpt5-6-probe",
     "provider": "databricks",
     "raw_model_id": "databricks-gpt-5.6",
-    "_note": "Legacy databricks GPT-5.6: same effort set as openai/gpt-5.6 — [none,low,medium,high,xhigh,max], default medium. Wire route not-applicable.",
+    "_note": "Probes the legacy databricks provider with a GPT-5.6 id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -927,10 +926,10 @@
     }
   },
   {
-    "id": "databricks-gpt5-1-effort",
+    "id": "databricks-gpt5-1-probe",
     "provider": "databricks",
     "raw_model_id": "databricks-gpt-5.1",
-    "_note": "Legacy databricks GPT-5.1: same effort set as openai/gpt-5.1 — [none,low,medium,high], default none. Wire route not-applicable.",
+    "_note": "Probes the legacy databricks provider with a GPT-5.1 id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -946,14 +945,13 @@
     }
   },
   {
-    "_group": "openai-compat alias canonicalization (Thufir P3 corrective action 1)",
-    "_note": "Rust normalizes openai-compat → Provider::OpenAi before reaching normalize_effort_for_provider. TS PROVIDER_ALIASES must match so the UI effort table equals the Rust request behavior. Interpreters must canonicalize openai-compat → openai before resolving; the expected values are identical to the corresponding openai vectors."
+    "_group": "openai-compat alias canonicalization probes",
+    "_note": "Probes whether openai-compat is canonicalized to openai before resolving; both interpreters must agree."
   },
   {
-    "id": "openai-compat-gpt-5-pro",
+    "id": "openai-compat-gpt-5-pro-probe",
     "provider": "openai-compat",
     "raw_model_id": "gpt-5-pro",
-    "_note": "openai-compat/gpt-5-pro must resolve identically to openai/gpt-5-pro: [high] only, default high.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -966,10 +964,9 @@
     }
   },
   {
-    "id": "openai-compat-gpt-5-5",
+    "id": "openai-compat-gpt-5-5-probe",
     "provider": "openai-compat",
     "raw_model_id": "gpt-5.5",
-    "_note": "openai-compat/gpt-5.5 must resolve identically to openai/gpt-5.5: [none,low,medium,high,xhigh], default medium.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -986,10 +983,10 @@
     }
   },
   {
-    "id": "openai-compat-empty-model",
+    "id": "openai-compat-blank-probe",
     "provider": "openai-compat",
     "raw_model_id": "",
-    "_note": "openai-compat with blank model: resolves identically to openai unknown — all-except-max, default medium.",
+    "_note": "Probes openai-compat canonicalization with a blank model id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1007,14 +1004,13 @@
     }
   },
   {
-    "_group": "gpt-5-base guard divergence fix (CRITICAL)",
-    "_note": "These vectors cover the 1-2 digit version suffix window where Rust and TS diverged. Must reject from gpt5-base, fall to concrete-unknown."
+    "_group": "gpt-5 short-version-suffix boundary probes (Rust/TS divergence window)",
+    "_note": "Probes the 1-2 digit version-suffix window where the Rust guard and the TS regex historically diverged."
   },
   {
-    "id": "openai-gpt5-10-preview-reject-base",
+    "id": "openai-gpt5-10-preview-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-10-preview",
-    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1030,10 +1026,9 @@
     }
   },
   {
-    "id": "openai-gpt5-2-mini-reject-base",
+    "id": "openai-gpt5-2-mini-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-2-mini",
-    "_note": "[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1049,10 +1044,9 @@
     }
   },
   {
-    "id": "openai-gpt5-9-dot-1-reject-base",
+    "id": "openai-gpt5-9-dot-1-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-9.1",
-    "_note": "[reshape delta class B1] uncurated/adversarial openai input; base gpt-5 prefix binds after the multi-digit guard is dropped.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1068,10 +1062,10 @@
     }
   },
   {
-    "id": "dbv2-gpt5-10-reject-base-route-preserved",
+    "id": "dbv2-gpt5-10-route-preservation-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-10",
-    "_note": "[reshape delta class B2] uncurated databricks_v2 gpt-5-<multi-digit>: base gpt-5 prefix binds (efforts narrow to minimal..high, normalization openai-standard) while the databricks_v2 wire route stays openai-responses. Pins the one delta class the other changed vectors did not exercise.",
+    "_note": "Probes a databricks_v2 gpt-5-<multi-digit> id, exercising both the effort axes and the wire route.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1087,10 +1081,10 @@
     }
   },
   {
-    "id": "dbv2-gpt-5-2-divergent-pin-preserved",
+    "id": "dbv2-gpt-5-2-divergent-exact-record-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-2",
-    "_note": "Guards the sole deliberately-divergent exact record: databricks-gpt-5-2 pins the removed dbv2-gpt-code-names-segment outcome (none..xhigh + openai-clamp-max-to-xhigh), NOT what the kept gpt-5 base prefix would produce (minimal..high + openai-standard). If the pin regresses toward the prefix, this vector fails.",
+    "_note": "Probes the sole deliberately-divergent exact record, whose pinned snapshot differs from what the gpt-5 base stem would produce.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1108,10 +1102,10 @@
     }
   },
   {
-    "id": "openai-customgpt-5-5-no-token-match",
+    "id": "openai-customgpt-5-5-nonboundary-probe",
     "provider": "openai",
     "raw_model_id": "customgpt-5-5-endpoint",
-    "_note": "boundary-aware stripCatalogPrefix fix: customgpt-5-5-endpoint has no boundary-aligned gpt- token (g in customgpt is preceded by m), so the alias is NOT stripped. Falls to openai concrete-unknown fallback.",
+    "_note": "Probes a name whose gpt- token is not boundary-aligned (preceded by 'm' in customgpt).",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1129,14 +1123,14 @@
     }
   },
   {
-    "_group": "DBv2 gpt segment rule boundary vectors",
-    "_note": "Verify segment match (not segment-prefix): 'gpt' must be an exact segment, not just a prefix of a segment."
+    "_group": "DBv2 gpt-segment boundary probes",
+    "_note": "Probes whether 'gpt' is treated as a full segment rather than a segment prefix."
   },
   {
-    "id": "dbv2-gptoss-not-responses",
+    "id": "dbv2-gptoss-segment-probe",
     "provider": "databricks_v2",
     "raw_model_id": "gptoss-model",
-    "_note": "Collision-negative: 'gptoss' is a segment starting with 'gpt' but NOT an exact 'gpt' or 'gpt5' segment. Must fall to mlflow-chat.",
+    "_note": "Probes a segment ('gptoss') that starts with but is not exactly 'gpt'/'gpt5'.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1154,10 +1148,10 @@
     }
   },
   {
-    "id": "dbv2-gptj-6b-not-responses",
+    "id": "dbv2-gptj-6b-segment-probe",
     "provider": "databricks_v2",
     "raw_model_id": "gptj-6b",
-    "_note": "Collision-negative: 'gptj' is not an exact 'gpt' or 'gpt5' segment. Must fall to mlflow-chat.",
+    "_note": "Probes a segment ('gptj') that is not exactly 'gpt'/'gpt5'.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1175,10 +1169,10 @@
     }
   },
   {
-    "id": "dbv2-customgpt-not-responses",
+    "id": "dbv2-customgpt-nonboundary-probe",
     "provider": "databricks_v2",
     "raw_model_id": "customgpt-5-5-endpoint",
-    "_note": "customgpt-5-5-endpoint: boundary-aware strip finds no boundary-aligned gpt- (preceded by m in customgpt). Normalized alias is customgpt-5-5-endpoint itself, segments=[customgpt,5,5,endpoint], no gpt segment → mlflow-chat. This is the corrected behavior.",
+    "_note": "Probes a name whose gpt- token is not boundary-aligned (preceded by 'm' in customgpt).",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1196,10 +1190,10 @@
     }
   },
   {
-    "id": "dbv2-gpt-neox-mlflow",
+    "id": "dbv2-gpt-neox-version-segment-probe",
     "provider": "databricks_v2",
     "raw_model_id": "gpt-neox-20b",
-    "_note": "gpt-version-segment fix: gpt-neox-20b strips to itself (boundary-aligned at start), segments=[gpt,neox,20b]. gpt-version-segment requires next segment after gpt to be numeric; neox starts with n → no match → falls to mlflow-chat. This is corrected behavior.",
+    "_note": "Probes a gpt- name whose next segment ('neox') is non-numeric.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1217,10 +1211,10 @@
     }
   },
   {
-    "id": "dbv2-gpt5-segment-positive",
+    "id": "dbv2-gpt5-custom-segment-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt5-custom",
-    "_note": "[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
+    "_note": "Probes a 'gpt5' segment inside a databricks- prefixed name.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1238,10 +1232,10 @@
     }
   },
   {
-    "id": "dbv2-dual-marker-gpt-wins-openai",
+    "id": "dbv2-gpt-opus-5-dual-marker-probe",
     "provider": "databricks_v2",
     "raw_model_id": "gpt-opus-5",
-    "_note": "[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
+    "_note": "Probes a name carrying both a gpt marker and a claude code word.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1259,13 +1253,13 @@
     }
   },
   {
-    "_group": "Missing positive vectors"
+    "_group": "Additional coverage probes"
   },
   {
-    "id": "anthropic-opus-5-adaptive-xhigh",
+    "id": "anthropic-opus-5-prefix-probe",
     "provider": "anthropic",
     "raw_model_id": "claude-opus-5-20270101",
-    "_note": "Opus-5 prefix rule: adaptive, supports xhigh+max. Verifies the rule is wired.",
+    "_note": "Probes the claude-opus-5 prefix rule.",
     "expect": {
       "thinking_mode": "adaptive",
       "supported_efforts": [
@@ -1282,10 +1276,10 @@
     }
   },
   {
-    "id": "dbv2-sol-normalization-policy",
+    "id": "dbv2-gpt-5-6-sol-normalization-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-6-sol",
-    "_note": "Sol exact record: normalization_policy comes from gpt5-6 family rule (openai-standard). Also checks supported_efforts override.",
+    "_note": "Probes the sol exact record's normalization and effort axes.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1301,10 +1295,10 @@
     }
   },
   {
-    "id": "dbv2-luna-segment-route",
+    "id": "dbv2-gpt-5-6-luna-exact-record-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-6-luna",
-    "_note": "Luna exact record: models.dev advertises [low,medium,high]. Exact record overrides family rule. Routes openai-responses (from family).",
+    "_note": "Probes the luna exact record against its family rule.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1319,10 +1313,10 @@
     }
   },
   {
-    "id": "dbv2-terra-segment-route",
+    "id": "dbv2-gpt-5-6-terra-exact-record-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-6-terra",
-    "_note": "Terra exact record: models.dev advertises [low,medium,high]. Exact record overrides family rule. Routes openai-responses (from family).",
+    "_note": "Probes the terra exact record against its family rule.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1337,10 +1331,10 @@
     }
   },
   {
-    "id": "dbv2-gpt5-4-nano-exact",
+    "id": "dbv2-gpt-5-4-nano-exact-record-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-4-nano",
-    "_note": "Exact record: gpt-5-4-nano, efforts [low,medium,high], registry_label 'GPT-5.4 Nano'.",
+    "_note": "Probes the gpt-5-4-nano exact record and its label.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1355,10 +1349,10 @@
     }
   },
   {
-    "id": "openrouter-concrete-unknown-fallback",
+    "id": "openrouter-concrete-unknown-probe",
     "provider": "openrouter",
     "raw_model_id": "some-model-xyz",
-    "_note": "openrouter concrete-unknown → _default fallback (wire route not-applicable).",
+    "_note": "Probes an uncatalogued openrouter model id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1377,10 +1371,10 @@
     }
   },
   {
-    "id": "openai-gpt5-pro-uppercase-provider",
+    "id": "openai-gpt5-pro-uppercase-provider-probe",
     "provider": "OpenAI",
     "raw_model_id": "gpt-5-pro",
-    "_note": "Casing: uppercase provider 'OpenAI' normalized to 'openai'. Must resolve same as openai/gpt-5-pro.",
+    "_note": "Probes an uppercased provider string ('OpenAI').",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1393,10 +1387,10 @@
     }
   },
   {
-    "id": "dbv2-exact-record-uppercase-model",
+    "id": "dbv2-uppercase-model-probe",
     "provider": "databricks_v2",
     "raw_model_id": "DATABRICKS-GPT-5-4-NANO",
-    "_note": "Casing: uppercase raw_model_id. Case-insensitive exact lookup must hit the lowercase record.",
+    "_note": "Probes an uppercased raw model id against a lowercase exact record.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1411,14 +1405,13 @@
     }
   },
   {
-    "_group": "Prototype-key safety vectors",
-    "_note": "Verify that PROVIDER_FALLBACKS Map prevents prototype-chain pollution."
+    "_group": "Prototype-key provider probes",
+    "_note": "Probes provider strings that collide with Object prototype keys."
   },
   {
-    "id": "prototype-key-constructor-blank",
+    "id": "prototype-key-constructor-blank-probe",
     "provider": "constructor",
     "raw_model_id": "",
-    "_note": "Prototype-key safety: \"constructor\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1437,10 +1430,9 @@
     }
   },
   {
-    "id": "prototype-key-constructor-some-model",
+    "id": "prototype-key-constructor-some-model-probe",
     "provider": "constructor",
     "raw_model_id": "some-model",
-    "_note": "Prototype-key safety: \"constructor\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1459,10 +1451,9 @@
     }
   },
   {
-    "id": "prototype-key-proto__-blank",
+    "id": "prototype-key-proto__-blank-probe",
     "provider": "__proto__",
     "raw_model_id": "",
-    "_note": "Prototype-key safety: \"__proto__\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1481,10 +1472,9 @@
     }
   },
   {
-    "id": "prototype-key-proto__-some-model",
+    "id": "prototype-key-proto__-some-model-probe",
     "provider": "__proto__",
     "raw_model_id": "some-model",
-    "_note": "Prototype-key safety: \"__proto__\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1503,14 +1493,13 @@
     }
   },
   {
-    "_group": "Boundary-aware strip prefix negative vectors",
-    "_note": "customgpt/sgpt/mygpt have no boundary-aligned family token, so no prefix is stripped."
+    "_group": "Non-boundary gpt- prefix probes",
+    "_note": "Probes names whose gpt- token is not boundary-aligned (preceded by an alphanumeric)."
   },
   {
-    "id": "openai-sgpt-5-5-no-strip",
+    "id": "openai-sgpt-5-5-nonboundary-probe",
     "provider": "openai",
     "raw_model_id": "sgpt-5-5",
-    "_note": "boundary-aware strip: \"sgpt-5-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to openai concrete-unknown fallback.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1528,10 +1517,9 @@
     }
   },
   {
-    "id": "dbv2-sgpt-5-5-mlflow",
+    "id": "dbv2-sgpt-5-5-nonboundary-probe",
     "provider": "databricks_v2",
     "raw_model_id": "sgpt-5-5",
-    "_note": "boundary-aware strip: \"sgpt-5-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to mlflow-chat.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1549,10 +1537,9 @@
     }
   },
   {
-    "id": "openai-mygpt-5-no-strip",
+    "id": "openai-mygpt-5-nonboundary-probe",
     "provider": "openai",
     "raw_model_id": "mygpt-5",
-    "_note": "boundary-aware strip: \"mygpt-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to openai concrete-unknown fallback.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1570,10 +1557,9 @@
     }
   },
   {
-    "id": "dbv2-mygpt-5-mlflow",
+    "id": "dbv2-mygpt-5-nonboundary-probe",
     "provider": "databricks_v2",
     "raw_model_id": "mygpt-5",
-    "_note": "boundary-aware strip: \"mygpt-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to mlflow-chat.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1591,10 +1577,10 @@
     }
   },
   {
-    "id": "dbv2-gpt-5-mini-exact-label",
+    "id": "dbv2-gpt-5-mini-exact-record-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-mini",
-    "_note": "Exact record: label 'GPT-5 Mini'. Display rule (a): exact-record-only, family 'GPT-5' must NOT appear.",
+    "_note": "Probes the gpt-5-mini exact record and its label.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1610,10 +1596,10 @@
     }
   },
   {
-    "id": "dbv2-gpt-5-nano-exact-label",
+    "id": "dbv2-gpt-5-nano-exact-record-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-5-nano",
-    "_note": "Exact record: label 'GPT-5 Nano'. Display rule (a): exact-record-only, family 'GPT-5' must NOT appear.",
+    "_note": "Probes the gpt-5-nano exact record and its label.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1629,10 +1615,10 @@
     }
   },
   {
-    "id": "dbv2-family-matched-no-exact-label-null",
+    "id": "dbv2-claude-opus-5-custom-family-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-claude-opus-5-custom",
-    "_note": "Family-matched (databricks- prefix stripped → claude-opus-5 → Anthropic adaptive). No exact record. Display rule (a): registry_label is null.",
+    "_note": "Probes a family-matched name with no exact record and its label axis.",
     "expect": {
       "thinking_mode": "adaptive",
       "supported_efforts": [
@@ -1649,10 +1635,10 @@
     }
   },
   {
-    "id": "dbv2-gpt-doubled-separator",
+    "id": "dbv2-gpt-doubled-separator-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt--5",
-    "_note": "[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.",
+    "_note": "Probes a doubled separator between gpt and its version.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1670,13 +1656,13 @@
     }
   },
   {
-    "_group": "Reshape: gpt-5 prefix collision family (longest-prefix + boundary)"
+    "_group": "gpt-5 prefix collision probes (longest-prefix + boundary)"
   },
   {
-    "id": "collision-gpt-5-base",
+    "id": "collision-gpt-5-base-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5",
-    "_note": "Base GPT-5: shortest prefix; efforts minimal..high, openai-standard.",
+    "_note": "Probes the base gpt-5 stem alone.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1692,10 +1678,10 @@
     }
   },
   {
-    "id": "collision-gpt-5-pro",
+    "id": "collision-gpt-5-pro-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-pro",
-    "_note": "Longer prefix gpt-5-pro wins over gpt-5; efforts [high] only.",
+    "_note": "Probes gpt-5-pro against the shorter gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1708,10 +1694,10 @@
     }
   },
   {
-    "id": "collision-gpt-5-10",
+    "id": "collision-gpt-5-10-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-10",
-    "_note": "[class B1] multi-digit minor now binds base gpt-5 prefix (guard dropped).",
+    "_note": "Probes a two-digit minor version against the gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1727,10 +1713,10 @@
     }
   },
   {
-    "id": "collision-gpt-5-6",
+    "id": "collision-gpt-5-6-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5.6",
-    "_note": "Dotted minor binds gpt-5.6 prefix over base gpt-5.",
+    "_note": "Probes a dotted minor version against the gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1748,10 +1734,10 @@
     }
   },
   {
-    "id": "collision-gpt-5-1",
+    "id": "collision-gpt-5-1-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5.1",
-    "_note": "gpt-5.1 prefix; default_effort none.",
+    "_note": "Probes the gpt-5.1 prefix.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1767,13 +1753,13 @@
     }
   },
   {
-    "_group": "Reshape: uncurated DBv2 tokens fall to concrete_unknown (mlflow-chat)"
+    "_group": "Uncurated DBv2 token probes"
   },
   {
-    "id": "uncurated-dbv2-gpt-6",
+    "id": "uncurated-dbv2-gpt-6-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-6",
-    "_note": "[class E1] non-5 gpt version: no exact, no prefix -> mlflow-chat.",
+    "_note": "Probes a non-5 gpt version with no exact record or prefix rule.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1791,10 +1777,10 @@
     }
   },
   {
-    "id": "uncurated-dbv2-gpt-4o",
+    "id": "uncurated-dbv2-gpt-4o-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-gpt-4o",
-    "_note": "[class E1] gpt-4o uncurated -> mlflow-chat.",
+    "_note": "Probes an uncatalogued gpt-4o databricks_v2 id.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1812,10 +1798,10 @@
     }
   },
   {
-    "id": "uncurated-dbv2-opus-5-bare",
+    "id": "uncurated-dbv2-opus-5-bare-probe",
     "provider": "databricks_v2",
     "raw_model_id": "opus-5",
-    "_note": "[class F] bare Claude code-name segment, no leading claude -> mlflow-chat.",
+    "_note": "Probes a bare Claude code-name segment with no leading claude.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1833,10 +1819,10 @@
     }
   },
   {
-    "id": "uncurated-dbv2-sol-bare",
+    "id": "uncurated-dbv2-sol-bare-probe",
     "provider": "databricks_v2",
     "raw_model_id": "sol",
-    "_note": "[class G] bare OpenAI code name -> mlflow-chat.",
+    "_note": "Probes a bare OpenAI code name.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1854,10 +1840,10 @@
     }
   },
   {
-    "id": "uncurated-dbv2-claude-prefix",
+    "id": "uncurated-dbv2-claude-prefix-probe",
     "provider": "databricks_v2",
     "raw_model_id": "databricks-claude-experimental",
-    "_note": "dbv2-claude-prefix keeps uncurated claude* on anthropic-messages/omit-fields.",
+    "_note": "Probes an uncurated databricks-claude-* name.",
     "expect": {
       "thinking_mode": "omit-fields",
       "supported_efforts": [
@@ -1874,13 +1860,13 @@
     }
   },
   {
-    "_group": "Reshape: negatives (must fall to fallback, not a family rule)"
+    "_group": "Negative-match probes (no family rule expected to bind)"
   },
   {
-    "id": "neg-gptoss-openai",
+    "id": "neg-gptoss-openai-probe",
     "provider": "openai",
     "raw_model_id": "gptoss",
-    "_note": "No gpt- boundary token -> openai concrete_unknown.",
+    "_note": "Probes a name with no gpt- boundary token.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1898,10 +1884,10 @@
     }
   },
   {
-    "id": "neg-gptj-6b-openai",
+    "id": "neg-gptj-6b-openai-probe",
     "provider": "openai",
     "raw_model_id": "gptj-6b",
-    "_note": "gptj is not a gpt- token -> fallback.",
+    "_note": "Probes 'gptj', which is not a gpt- token.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1919,10 +1905,10 @@
     }
   },
   {
-    "id": "neg-consolidated-llama-dbv2",
+    "id": "neg-consolidated-llama-dbv2-probe",
     "provider": "databricks_v2",
     "raw_model_id": "consolidated-llama",
-    "_note": "'sol' substring is not a segment; no match -> mlflow-chat.",
+    "_note": "Probes a name where 'sol' is a substring, not a segment.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1940,10 +1926,10 @@
     }
   },
   {
-    "id": "neg-terraform-coder-dbv2",
+    "id": "neg-terraform-coder-dbv2-probe",
     "provider": "databricks_v2",
     "raw_model_id": "terraform-coder",
-    "_note": "'terra' substring is not a segment -> mlflow-chat.",
+    "_note": "Probes a name where 'terra' is a substring, not a segment.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1961,10 +1947,10 @@
     }
   },
   {
-    "id": "neg-octopus-model-dbv2",
+    "id": "neg-octopus-model-dbv2-probe",
     "provider": "databricks_v2",
     "raw_model_id": "octopus-model",
-    "_note": "'opus' substring is not a leading claude prefix -> mlflow-chat.",
+    "_note": "Probes a name where 'opus' is a substring, not a leading claude prefix.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -1982,13 +1968,13 @@
     }
   },
   {
-    "_group": "Reshape: boundary behavior of exact+prefix matcher"
+    "_group": "Exact+prefix matcher boundary probes"
   },
   {
-    "id": "boundary-embedded-token-openai",
+    "id": "boundary-embedded-token-openai-probe",
     "provider": "openai",
     "raw_model_id": "gpt-4-gpt-5-pro",
-    "_note": "[class C] embedded gpt-5-pro token no longer captured -> fallback.",
+    "_note": "Probes a gpt-5-pro token embedded mid-name rather than at the start.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -2006,10 +1992,10 @@
     }
   },
   {
-    "id": "boundary-dot-suffix-openai",
+    "id": "boundary-dot-suffix-openai-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5.6.x",
-    "_note": "[class D] '.'-boundary: gpt-5.6 prefix binds through a trailing dot segment.",
+    "_note": "Probes a trailing dot-delimited segment after gpt-5.6.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
@@ -2027,10 +2013,10 @@
     }
   },
   {
-    "id": "boundary-claude-3-digit-run-anthropic",
+    "id": "boundary-claude-3-digit-run-anthropic-probe",
     "provider": "anthropic",
     "raw_model_id": "claude-35",
-    "_note": "[class H] boundary-aware prefix: claude-3 no longer matches claude-35 -> fallback.",
+    "_note": "Probes whether the claude-3 prefix binds a longer digit run ('35').",
     "expect": {
       "thinking_mode": "omit-fields",
       "supported_efforts": [
@@ -2047,10 +2033,10 @@
     }
   },
   {
-    "id": "boundary-claude-opus-4-70-anthropic",
+    "id": "boundary-claude-opus-4-70-anthropic-probe",
     "provider": "anthropic",
     "raw_model_id": "claude-opus-4-70",
-    "_note": "[class H] claude-opus-4-7 prefix does not bind claude-opus-4-70 -> fallback.",
+    "_note": "Probes whether the claude-opus-4-7 prefix binds a longer digit run ('70').",
     "expect": {
       "thinking_mode": "omit-fields",
       "supported_efforts": [
@@ -2067,10 +2053,10 @@
     }
   },
   {
-    "id": "boundary-gpt-5-1234-openai",
+    "id": "boundary-gpt-5-1234-openai-probe",
     "provider": "openai",
     "raw_model_id": "gpt-5-1234",
-    "_note": "4-digit run: still binds base gpt-5 prefix (identical old and new).",
+    "_note": "Probes a 4-digit run after the gpt-5 stem.",
     "expect": {
       "thinking_mode": "none",
       "supported_efforts": [
