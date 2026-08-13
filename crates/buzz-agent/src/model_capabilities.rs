@@ -27,12 +27,12 @@
 
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::ThinkingEffort;
 
 /// How a model activates and controls reasoning depth on the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThinkingMode {
     Adaptive,
@@ -43,7 +43,7 @@ pub enum ThinkingMode {
 
 /// The Databricks v2 AI Gateway wire route a model is served on. `NotApplicable`
 /// marks non-Databricks providers; `RouteUnknown` marks a blank Databricks id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DatabricksV2Route {
     AnthropicMessages,
@@ -54,7 +54,7 @@ pub enum DatabricksV2Route {
 }
 
 /// Post-resolution effort normalization applied before a request is sent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NormalizationPolicy {
     None,
@@ -209,8 +209,10 @@ struct Manifest {
 }
 
 /// The resolved six-axis capability profile for one `(provider, model)` query.
-/// All fields borrow from the process-lifetime manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// All fields borrow from the process-lifetime manifest. The field names and
+/// declaration order are the corpus `expect` schema — the test-only generator
+/// serializes this struct directly, so there is no second encoding of the axes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CapabilityResult {
     pub thinking_mode: ThinkingMode,
     pub supported_efforts: &'static [ThinkingEffort],
@@ -486,29 +488,221 @@ fn validate_manifest(m: &Manifest) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// One executable corpus vector: the query and its expected six-axis result.
-    #[derive(Debug, Deserialize)]
-    struct CorpusEntry {
-        id: Option<String>,
-        provider: Option<String>,
-        raw_model_id: Option<String>,
-        expect: Option<ExpectedCapabilities>,
+    /// One entry of the generator's *inputs-only* table. It encodes **which
+    /// questions to ask** — section headers and `(provider, raw_model_id)`
+    /// query pairs plus a human note — and never any expected answer. Every
+    /// answer is computed by the production [`resolve`] at generation time, so
+    /// the manifest stays the single place capability behavior is encoded.
+    enum Q {
+        Section {
+            group: &'static str,
+            note: Option<&'static str>,
+        },
+        Vector {
+            id: &'static str,
+            provider: &'static str,
+            raw_model_id: &'static str,
+            note: Option<&'static str>,
+        },
     }
 
-    #[derive(Debug, Deserialize)]
-    struct ExpectedCapabilities {
-        thinking_mode: ThinkingMode,
-        supported_efforts: Vec<ThinkingEffort>,
-        default_effort: Option<ThinkingEffort>,
-        databricks_v2_wire_route: DatabricksV2Route,
-        normalization_policy: NormalizationPolicy,
-        registry_label: Option<String>,
+    /// The inputs-only question set (section headers interleaved with query
+    /// vectors, in file order). Answers live only in the manifest; this table
+    /// says which questions to ask. Adding, removing, or reordering a `Vector`
+    /// here changes the generated corpus — run `just regen-model-corpus`.
+    const INPUTS: &[Q] = &[
+    Q::Section { group: "Anthropic exact family rules", note: Some("All require thinking_mode=manual-budget or adaptive, correct supported_efforts, databricks_v2_wire_route=not-applicable") },
+    Q::Vector { id: "anthropic-claude-3-family", provider: "anthropic", raw_model_id: "claude-3-7-sonnet-20250219", note: None },
+    Q::Vector { id: "anthropic-claude-opus-4-5", provider: "anthropic", raw_model_id: "claude-opus-4-5", note: None },
+    Q::Vector { id: "anthropic-claude-opus-4-7", provider: "anthropic", raw_model_id: "claude-opus-4-7", note: None },
+    Q::Vector { id: "anthropic-claude-opus-4-8", provider: "anthropic", raw_model_id: "claude-opus-4-8", note: None },
+    Q::Vector { id: "anthropic-claude-sonnet-5", provider: "anthropic", raw_model_id: "claude-sonnet-5-20260101", note: None },
+    Q::Vector { id: "anthropic-claude-fable-5", provider: "anthropic", raw_model_id: "claude-fable-5", note: None },
+    Q::Vector { id: "anthropic-claude-mythos-5", provider: "anthropic", raw_model_id: "claude-mythos-5", note: None },
+    Q::Vector { id: "anthropic-claude-opus-4-6", provider: "anthropic", raw_model_id: "claude-opus-4-6", note: None },
+    Q::Vector { id: "anthropic-claude-sonnet-4-6", provider: "anthropic", raw_model_id: "claude-sonnet-4-6", note: None },
+    Q::Vector { id: "anthropic-claude-mythos-preview", provider: "anthropic", raw_model_id: "claude-mythos-preview", note: None },
+    Q::Section { group: "Anthropic unknowns and fallbacks", note: None },
+    Q::Vector { id: "anthropic-unknown-blank", provider: "anthropic", raw_model_id: "", note: None },
+    Q::Vector { id: "anthropic-unknown-concrete", provider: "anthropic", raw_model_id: "claude-ultra-9000", note: None },
+    Q::Section { group: "OpenAI exact family rules", note: None },
+    Q::Vector { id: "openai-gpt5-pro", provider: "openai", raw_model_id: "gpt-5-pro", note: None },
+    Q::Vector { id: "openai-gpt5.6", provider: "openai", raw_model_id: "gpt-5.6", note: None },
+    Q::Vector { id: "openai-gpt5-6-dashed", provider: "openai", raw_model_id: "gpt-5-6", note: None },
+    Q::Vector { id: "openai-gpt5.5", provider: "openai", raw_model_id: "gpt-5.5", note: None },
+    Q::Vector { id: "openai-gpt5.4", provider: "openai", raw_model_id: "gpt-5.4", note: None },
+    Q::Vector { id: "openai-gpt5.1", provider: "openai", raw_model_id: "gpt-5.1", note: None },
+    Q::Vector { id: "openai-gpt5-base", provider: "openai", raw_model_id: "gpt-5", note: None },
+    Q::Section { group: "OpenAI adversarial — gpt5 boundary-aware matching (ported from config.rs tests)", note: None },
+    Q::Vector { id: "openai-gpt5-1106-should-not-match-base", provider: "openai", raw_model_id: "gpt-5-1106", note: Some("gpt-5-1106: '-1106' is a 4-digit date segment, NOT a short version (gpt5-base rejects only 1-3 digit suffixes). Must match base table [minimal,low,medium,high], NOT fall through to unknown.") },
+    Q::Vector { id: "openai-gpt5-4o-matches-base", provider: "openai", raw_model_id: "gpt-5-4o", note: Some("gpt-5-4o: '4o' after '-' is NOT a short numeric suffix (it contains a letter). Must match gpt5-base. Crucially, must NOT match gpt-5.4 (the '4' is followed by 'o', not boundary char).") },
+    Q::Vector { id: "openai-gpt5-pro-not-matching-gpt5-base", provider: "openai", raw_model_id: "gpt-5-pro", note: Some("gpt-5-pro should hit gpt5-pro rule (priority 20), NOT gpt-5 base.") },
+    Q::Vector { id: "openai-multi-digit-version-gpt5-10", provider: "openai", raw_model_id: "gpt-5-10", note: Some("[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.") },
+    Q::Vector { id: "openai-gpt5-date-suffix", provider: "openai", raw_model_id: "gpt-5-20260101", note: Some("gpt-5-20260101 — long numeric suffix after base: '20260101' is 8 digits, beyond 1-3 digit reject, should hit gpt5-base.") },
+    Q::Section { group: "DatabricksV2 — segment-based routing (ported from llm.rs tests)", note: None },
+    Q::Vector { id: "dbv2-gpt5-route-openai-responses", provider: "databricks_v2", raw_model_id: "gpt-5.5", note: None },
+    Q::Vector { id: "dbv2-claude-route-anthropic-messages", provider: "databricks_v2", raw_model_id: "claude-opus-4-7", note: None },
+    Q::Vector { id: "dbv2-claude-prefix-stripped", provider: "databricks_v2", raw_model_id: "databricks-claude-opus-4-7", note: Some("databricks- prefix stripped → claude-opus-4-7 → Anthropic route") },
+    Q::Vector { id: "dbv2-goose-claude-prefix-stripped", provider: "databricks_v2", raw_model_id: "goose-claude-fable-5", note: Some("goose- prefix stripped → claude-fable-5 → Anthropic adaptive+xhigh") },
+    Q::Vector { id: "dbv2-team-prefix-stripped", provider: "databricks_v2", raw_model_id: "team-x-claude-opus-4-7", note: Some("team-x- prefix stripped → claude-opus-4-7 → Anthropic route") },
+    Q::Vector { id: "dbv2-consolidated-llama-not-sol", provider: "databricks_v2", raw_model_id: "consolidated-llama", note: Some("segment test: 'sol' is a SUBSTRING of 'consolidated', not a boundary-aligned family token (family_tokens: claude-, gpt-) — no family-rule match. Falls through to databricks_v2 concrete-unknown → mlflow-chat.") },
+    Q::Vector { id: "dbv2-terraform-coder-not-terra", provider: "databricks_v2", raw_model_id: "terraform-coder", note: Some("segment test: 'terra' is a prefix of 'terraform' — must NOT match 'terra' code name. Falls through to mlflow-chat.") },
+    Q::Vector { id: "dbv2-corpus-reranker-not-opus", provider: "databricks_v2", raw_model_id: "corpus-reranker", note: Some("segment test: 'opus' is NOT a segment of corpus-reranker (segments: corpus, reranker). mlflow-chat.") },
+    Q::Vector { id: "dbv2-octopus-model-not-opus", provider: "databricks_v2", raw_model_id: "octopus-model", note: Some("segment test: 'opus' is not a segment of octopus-model (segments: octopus, model). mlflow-chat.") },
+    Q::Vector { id: "dbv2-goose-opus-5-is-anthropic", provider: "databricks_v2", raw_model_id: "goose-opus-5", note: Some("[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.") },
+    Q::Section { group: "P2-A resolver-contract vectors (plan v4 §Resolver contract)", note: None },
+    Q::Vector { id: "resolver-exact-raw-id-hit", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-4-mini", note: Some("Exact record exists. Must return exact Databricks override: low|medium|high (not family's none+xhigh).") },
+    Q::Vector { id: "resolver-prefixed-alias-misses-exact", provider: "databricks_v2", raw_model_id: "team-x-databricks-gpt-5-4-mini", note: Some("Prefixed alias of an exact ID. Raw exact lookup MUST miss (key is team-x-..., not databricks-...). Falls to family rules (gpt5-4 family → none+xhigh).") },
+    Q::Vector { id: "resolver-cross-provider-misses-exact", provider: "openai", raw_model_id: "databricks-gpt-5-4-mini", note: Some("Same raw ID but different provider. Exact record is databricks_v2-scoped; must miss. Falls to openai family rules.") },
+    Q::Vector { id: "resolver-exact-efforts-plus-family-route", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-6-sol", note: Some("Exact record with efforts from models.dev (low|medium|high|max — provider-advertised, no none/xhigh). Route materialized from gpt5-6 family rule (openai-responses). Must return both, complete.") },
+    Q::Vector { id: "dbv2-gpt5-5-exact-override", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-5", note: Some("Exact record adopts models.dev advertised set [low,medium,high]. Family rule (gpt5-5) has none+xhigh — provider-advertised wins per plan F1.") },
+    Q::Section { group: "Blank vs concrete-unknown per provider (P2-B fallback vectors)", note: None },
+    Q::Vector { id: "dbv2-blank-all7-route-unknown", provider: "databricks_v2", raw_model_id: "", note: Some("DBv2 blank: route-unknown, all 7 efforts, default medium.") },
+    Q::Vector { id: "dbv2-concrete-unknown-mlflow-no-max", provider: "databricks_v2", raw_model_id: "some-unknown-model-xyz", note: Some("DBv2 concrete-unknown: mlflow-chat, all-except-max (6 efforts).") },
+    Q::Vector { id: "openai-blank-all-except-max", provider: "openai", raw_model_id: "", note: Some("OpenAI blank: not-applicable route, all-except-max, medium default.") },
+    Q::Vector { id: "openai-concrete-unknown-all-except-max", provider: "openai", raw_model_id: "gpt-4o", note: Some("OpenAI concrete unknown (unverified family): not-applicable route, all-except-max, medium default.") },
+    Q::Vector { id: "anthropic-blank-adaptive-full", provider: "anthropic", raw_model_id: "", note: Some("Anthropic blank: assume adaptive with full support (incl. xhigh).") },
+    Q::Vector { id: "anthropic-concrete-unknown-omit-fields", provider: "anthropic", raw_model_id: "claude-ultra-9000", note: Some("Anthropic concrete-unknown: omit-fields (never guess request shape).") },
+    Q::Section { group: "Legacy Databricks provider (P3 effort rules)", note: None },
+    Q::Vector { id: "databricks-gpt5-pro-effort", provider: "databricks", raw_model_id: "databricks-gpt-5-pro", note: Some("Legacy databricks GPT-5 Pro: same effort set as openai/gpt-5-pro — only [high], default high. Wire route not-applicable.") },
+    Q::Vector { id: "databricks-gpt5-6-effort", provider: "databricks", raw_model_id: "databricks-gpt-5.6", note: Some("Legacy databricks GPT-5.6: same effort set as openai/gpt-5.6 — [none,low,medium,high,xhigh,max], default medium. Wire route not-applicable.") },
+    Q::Vector { id: "databricks-gpt5-1-effort", provider: "databricks", raw_model_id: "databricks-gpt-5.1", note: Some("Legacy databricks GPT-5.1: same effort set as openai/gpt-5.1 — [none,low,medium,high], default none. Wire route not-applicable.") },
+    Q::Section { group: "openai-compat alias canonicalization (Thufir P3 corrective action 1)", note: Some("Rust normalizes openai-compat → Provider::OpenAi before reaching normalize_effort_for_provider. TS PROVIDER_ALIASES must match so the UI effort table equals the Rust request behavior. Interpreters must canonicalize openai-compat → openai before resolving; the expected values are identical to the corresponding openai vectors.") },
+    Q::Vector { id: "openai-compat-gpt-5-pro", provider: "openai-compat", raw_model_id: "gpt-5-pro", note: Some("openai-compat/gpt-5-pro must resolve identically to openai/gpt-5-pro: [high] only, default high.") },
+    Q::Vector { id: "openai-compat-gpt-5-5", provider: "openai-compat", raw_model_id: "gpt-5.5", note: Some("openai-compat/gpt-5.5 must resolve identically to openai/gpt-5.5: [none,low,medium,high,xhigh], default medium.") },
+    Q::Vector { id: "openai-compat-empty-model", provider: "openai-compat", raw_model_id: "", note: Some("openai-compat with blank model: resolves identically to openai unknown — all-except-max, default medium.") },
+    Q::Section { group: "gpt-5-base guard divergence fix (CRITICAL)", note: Some("These vectors cover the 1-2 digit version suffix window where Rust and TS diverged. Must reject from gpt5-base, fall to concrete-unknown.") },
+    Q::Vector { id: "openai-gpt5-10-preview-reject-base", provider: "openai", raw_model_id: "gpt-5-10-preview", note: Some("[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.") },
+    Q::Vector { id: "openai-gpt5-2-mini-reject-base", provider: "openai", raw_model_id: "gpt-5-2-mini", note: Some("[reshape delta class B1] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.") },
+    Q::Vector { id: "openai-gpt5-9-dot-1-reject-base", provider: "openai", raw_model_id: "gpt-5-9.1", note: Some("[reshape delta class B1] uncurated/adversarial openai input; base gpt-5 prefix binds after the multi-digit guard is dropped.") },
+    Q::Vector { id: "dbv2-gpt5-10-reject-base-route-preserved", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-10", note: Some("[reshape delta class B2] uncurated databricks_v2 gpt-5-<multi-digit>: base gpt-5 prefix binds (efforts narrow to minimal..high, normalization openai-standard) while the databricks_v2 wire route stays openai-responses. Pins the one delta class the other changed vectors did not exercise.") },
+    Q::Vector { id: "dbv2-gpt-5-2-divergent-pin-preserved", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-2", note: Some("Guards the sole deliberately-divergent exact record: databricks-gpt-5-2 pins the removed dbv2-gpt-code-names-segment outcome (none..xhigh + openai-clamp-max-to-xhigh), NOT what the kept gpt-5 base prefix would produce (minimal..high + openai-standard). If the pin regresses toward the prefix, this vector fails.") },
+    Q::Vector { id: "openai-customgpt-5-5-no-token-match", provider: "openai", raw_model_id: "customgpt-5-5-endpoint", note: Some("boundary-aware stripCatalogPrefix fix: customgpt-5-5-endpoint has no boundary-aligned gpt- token (g in customgpt is preceded by m), so the alias is NOT stripped. Falls to openai concrete-unknown fallback.") },
+    Q::Section { group: "DBv2 gpt segment rule boundary vectors", note: Some("Verify segment match (not segment-prefix): 'gpt' must be an exact segment, not just a prefix of a segment.") },
+    Q::Vector { id: "dbv2-gptoss-not-responses", provider: "databricks_v2", raw_model_id: "gptoss-model", note: Some("Collision-negative: 'gptoss' is a segment starting with 'gpt' but NOT an exact 'gpt' or 'gpt5' segment. Must fall to mlflow-chat.") },
+    Q::Vector { id: "dbv2-gptj-6b-not-responses", provider: "databricks_v2", raw_model_id: "gptj-6b", note: Some("Collision-negative: 'gptj' is not an exact 'gpt' or 'gpt5' segment. Must fall to mlflow-chat.") },
+    Q::Vector { id: "dbv2-customgpt-not-responses", provider: "databricks_v2", raw_model_id: "customgpt-5-5-endpoint", note: Some("customgpt-5-5-endpoint: boundary-aware strip finds no boundary-aligned gpt- (preceded by m in customgpt). Normalized alias is customgpt-5-5-endpoint itself, segments=[customgpt,5,5,endpoint], no gpt segment → mlflow-chat. This is the corrected behavior.") },
+    Q::Vector { id: "dbv2-gpt-neox-mlflow", provider: "databricks_v2", raw_model_id: "gpt-neox-20b", note: Some("gpt-version-segment fix: gpt-neox-20b strips to itself (boundary-aligned at start), segments=[gpt,neox,20b]. gpt-version-segment requires next segment after gpt to be numeric; neox starts with n → no match → falls to mlflow-chat. This is corrected behavior.") },
+    Q::Vector { id: "dbv2-gpt5-segment-positive", provider: "databricks_v2", raw_model_id: "databricks-gpt5-custom", note: Some("[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.") },
+    Q::Vector { id: "dbv2-dual-marker-gpt-wins-openai", provider: "databricks_v2", raw_model_id: "gpt-opus-5", note: Some("[reshape delta class F] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.") },
+    Q::Section { group: "Missing positive vectors", note: None },
+    Q::Vector { id: "anthropic-opus-5-adaptive-xhigh", provider: "anthropic", raw_model_id: "claude-opus-5-20270101", note: Some("Opus-5 prefix rule: adaptive, supports xhigh+max. Verifies the rule is wired.") },
+    Q::Vector { id: "dbv2-sol-normalization-policy", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-6-sol", note: Some("Sol exact record: normalization_policy comes from gpt5-6 family rule (openai-standard). Also checks supported_efforts override.") },
+    Q::Vector { id: "dbv2-luna-segment-route", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-6-luna", note: Some("Luna exact record: models.dev advertises [low,medium,high]. Exact record overrides family rule. Routes openai-responses (from family).") },
+    Q::Vector { id: "dbv2-terra-segment-route", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-6-terra", note: Some("Terra exact record: models.dev advertises [low,medium,high]. Exact record overrides family rule. Routes openai-responses (from family).") },
+    Q::Vector { id: "dbv2-gpt5-4-nano-exact", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-4-nano", note: Some("Exact record: gpt-5-4-nano, efforts [low,medium,high], registry_label 'GPT-5.4 Nano'.") },
+    Q::Vector { id: "openrouter-concrete-unknown-fallback", provider: "openrouter", raw_model_id: "some-model-xyz", note: Some("openrouter concrete-unknown → _default fallback (wire route not-applicable).") },
+    Q::Vector { id: "openai-gpt5-pro-uppercase-provider", provider: "OpenAI", raw_model_id: "gpt-5-pro", note: Some("Casing: uppercase provider 'OpenAI' normalized to 'openai'. Must resolve same as openai/gpt-5-pro.") },
+    Q::Vector { id: "dbv2-exact-record-uppercase-model", provider: "databricks_v2", raw_model_id: "DATABRICKS-GPT-5-4-NANO", note: Some("Casing: uppercase raw_model_id. Case-insensitive exact lookup must hit the lowercase record.") },
+    Q::Section { group: "Prototype-key safety vectors", note: Some("Verify that PROVIDER_FALLBACKS Map prevents prototype-chain pollution.") },
+    Q::Vector { id: "prototype-key-constructor-blank", provider: "constructor", raw_model_id: "", note: Some("Prototype-key safety: \"constructor\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.") },
+    Q::Vector { id: "prototype-key-constructor-some-model", provider: "constructor", raw_model_id: "some-model", note: Some("Prototype-key safety: \"constructor\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.") },
+    Q::Vector { id: "prototype-key-proto__-blank", provider: "__proto__", raw_model_id: "", note: Some("Prototype-key safety: \"__proto__\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.") },
+    Q::Vector { id: "prototype-key-proto__-some-model", provider: "__proto__", raw_model_id: "some-model", note: Some("Prototype-key safety: \"__proto__\" as provider must not resolve through Object prototype chain. Must return a complete record identical to default fallback.") },
+    Q::Section { group: "Boundary-aware strip prefix negative vectors", note: Some("customgpt/sgpt/mygpt have no boundary-aligned family token, so no prefix is stripped.") },
+    Q::Vector { id: "openai-sgpt-5-5-no-strip", provider: "openai", raw_model_id: "sgpt-5-5", note: Some("boundary-aware strip: \"sgpt-5-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to openai concrete-unknown fallback.") },
+    Q::Vector { id: "dbv2-sgpt-5-5-mlflow", provider: "databricks_v2", raw_model_id: "sgpt-5-5", note: Some("boundary-aware strip: \"sgpt-5-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to mlflow-chat.") },
+    Q::Vector { id: "openai-mygpt-5-no-strip", provider: "openai", raw_model_id: "mygpt-5", note: Some("boundary-aware strip: \"mygpt-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to openai concrete-unknown fallback.") },
+    Q::Vector { id: "dbv2-mygpt-5-mlflow", provider: "databricks_v2", raw_model_id: "mygpt-5", note: Some("boundary-aware strip: \"mygpt-5\" has gpt- at a non-boundary position (preceded by alphanumeric). No strip occurs. Falls to mlflow-chat.") },
+    Q::Vector { id: "dbv2-gpt-5-mini-exact-label", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-mini", note: Some("Exact record: label 'GPT-5 Mini'. Display rule (a): exact-record-only, family 'GPT-5' must NOT appear.") },
+    Q::Vector { id: "dbv2-gpt-5-nano-exact-label", provider: "databricks_v2", raw_model_id: "databricks-gpt-5-nano", note: Some("Exact record: label 'GPT-5 Nano'. Display rule (a): exact-record-only, family 'GPT-5' must NOT appear.") },
+    Q::Vector { id: "dbv2-family-matched-no-exact-label-null", provider: "databricks_v2", raw_model_id: "databricks-claude-opus-5-custom", note: Some("Family-matched (databricks- prefix stripped → claude-opus-5 → Anthropic adaptive). No exact record. Display rule (a): registry_label is null.") },
+    Q::Vector { id: "dbv2-gpt-doubled-separator", provider: "databricks_v2", raw_model_id: "databricks-gpt--5", note: Some("[reshape delta class E2] uncurated/adversarial input; exact+prefix matcher result. See the compatibility table in PR #5597.") },
+    Q::Section { group: "Reshape: gpt-5 prefix collision family (longest-prefix + boundary)", note: None },
+    Q::Vector { id: "collision-gpt-5-base", provider: "openai", raw_model_id: "gpt-5", note: Some("Base GPT-5: shortest prefix; efforts minimal..high, openai-standard.") },
+    Q::Vector { id: "collision-gpt-5-pro", provider: "openai", raw_model_id: "gpt-5-pro", note: Some("Longer prefix gpt-5-pro wins over gpt-5; efforts [high] only.") },
+    Q::Vector { id: "collision-gpt-5-10", provider: "openai", raw_model_id: "gpt-5-10", note: Some("[class B1] multi-digit minor now binds base gpt-5 prefix (guard dropped).") },
+    Q::Vector { id: "collision-gpt-5-6", provider: "openai", raw_model_id: "gpt-5.6", note: Some("Dotted minor binds gpt-5.6 prefix over base gpt-5.") },
+    Q::Vector { id: "collision-gpt-5-1", provider: "openai", raw_model_id: "gpt-5.1", note: Some("gpt-5.1 prefix; default_effort none.") },
+    Q::Section { group: "Reshape: uncurated DBv2 tokens fall to concrete_unknown (mlflow-chat)", note: None },
+    Q::Vector { id: "uncurated-dbv2-gpt-6", provider: "databricks_v2", raw_model_id: "databricks-gpt-6", note: Some("[class E1] non-5 gpt version: no exact, no prefix -> mlflow-chat.") },
+    Q::Vector { id: "uncurated-dbv2-gpt-4o", provider: "databricks_v2", raw_model_id: "databricks-gpt-4o", note: Some("[class E1] gpt-4o uncurated -> mlflow-chat.") },
+    Q::Vector { id: "uncurated-dbv2-opus-5-bare", provider: "databricks_v2", raw_model_id: "opus-5", note: Some("[class F] bare Claude code-name segment, no leading claude -> mlflow-chat.") },
+    Q::Vector { id: "uncurated-dbv2-sol-bare", provider: "databricks_v2", raw_model_id: "sol", note: Some("[class G] bare OpenAI code name -> mlflow-chat.") },
+    Q::Vector { id: "uncurated-dbv2-claude-prefix", provider: "databricks_v2", raw_model_id: "databricks-claude-experimental", note: Some("dbv2-claude-prefix keeps uncurated claude* on anthropic-messages/omit-fields.") },
+    Q::Section { group: "Reshape: negatives (must fall to fallback, not a family rule)", note: None },
+    Q::Vector { id: "neg-gptoss-openai", provider: "openai", raw_model_id: "gptoss", note: Some("No gpt- boundary token -> openai concrete_unknown.") },
+    Q::Vector { id: "neg-gptj-6b-openai", provider: "openai", raw_model_id: "gptj-6b", note: Some("gptj is not a gpt- token -> fallback.") },
+    Q::Vector { id: "neg-consolidated-llama-dbv2", provider: "databricks_v2", raw_model_id: "consolidated-llama", note: Some("'sol' substring is not a segment; no match -> mlflow-chat.") },
+    Q::Vector { id: "neg-terraform-coder-dbv2", provider: "databricks_v2", raw_model_id: "terraform-coder", note: Some("'terra' substring is not a segment -> mlflow-chat.") },
+    Q::Vector { id: "neg-octopus-model-dbv2", provider: "databricks_v2", raw_model_id: "octopus-model", note: Some("'opus' substring is not a leading claude prefix -> mlflow-chat.") },
+    Q::Section { group: "Reshape: boundary behavior of exact+prefix matcher", note: None },
+    Q::Vector { id: "boundary-embedded-token-openai", provider: "openai", raw_model_id: "gpt-4-gpt-5-pro", note: Some("[class C] embedded gpt-5-pro token no longer captured -> fallback.") },
+    Q::Vector { id: "boundary-dot-suffix-openai", provider: "openai", raw_model_id: "gpt-5.6.x", note: Some("[class D] '.'-boundary: gpt-5.6 prefix binds through a trailing dot segment.") },
+    Q::Vector { id: "boundary-claude-3-digit-run-anthropic", provider: "anthropic", raw_model_id: "claude-35", note: Some("[class H] boundary-aware prefix: claude-3 no longer matches claude-35 -> fallback.") },
+    Q::Vector { id: "boundary-claude-opus-4-70-anthropic", provider: "anthropic", raw_model_id: "claude-opus-4-70", note: Some("[class H] claude-opus-4-7 prefix does not bind claude-opus-4-70 -> fallback.") },
+    Q::Vector { id: "boundary-gpt-5-1234-openai", provider: "openai", raw_model_id: "gpt-5-1234", note: Some("4-digit run: still binds base gpt-5 prefix (identical old and new).") },
+    ];
+
+    /// A section marker in the generated corpus (`_group` + optional `_note`).
+    #[derive(Serialize)]
+    struct SectionOut {
+        #[serde(rename = "_group")]
+        group: &'static str,
+        #[serde(rename = "_note", skip_serializing_if = "Option::is_none")]
+        note: Option<&'static str>,
+    }
+
+    /// One executable vector: the query, an optional note, and the resolver's
+    /// snapshotted answer. `expect` is a [`CapabilityResult`] serialized
+    /// directly — the axis names/order and the enum spellings come from the
+    /// production types, so nothing about the answer is encoded a second time.
+    #[derive(Serialize)]
+    struct VectorOut {
+        id: &'static str,
+        provider: &'static str,
+        raw_model_id: &'static str,
+        #[serde(rename = "_note", skip_serializing_if = "Option::is_none")]
+        note: Option<&'static str>,
+        expect: CapabilityResult,
+    }
+
+    /// A heterogeneous corpus entry. `untagged` writes the inner object with no
+    /// discriminator, yielding the one flat array the harnesses replay.
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    enum CorpusOut {
+        Section(SectionOut),
+        Vector(VectorOut),
     }
 
     const CORPUS_JSON: &str = include_str!("../../../scripts/normative-corpus.json");
 
-    fn corpus() -> Vec<CorpusEntry> {
-        serde_json::from_str(CORPUS_JSON).expect("normative-corpus.json must parse")
+    /// Render the corpus from [`INPUTS`] by running the production [`resolve`]
+    /// over every query. Deterministic: fixed input order, struct-declaration
+    /// key order, `serde_json` pretty (2-space) formatting, trailing newline.
+    /// This is the single writer used by both the drift gate and the regen
+    /// recipe, so "what the gate checks" and "what regen writes" cannot drift.
+    fn generate_corpus_json() -> String {
+        let entries: Vec<CorpusOut> = INPUTS
+            .iter()
+            .map(|q| match *q {
+                Q::Section { group, note } => CorpusOut::Section(SectionOut { group, note }),
+                Q::Vector {
+                    id,
+                    provider,
+                    raw_model_id,
+                    note,
+                } => CorpusOut::Vector(VectorOut {
+                    id,
+                    provider,
+                    raw_model_id,
+                    note,
+                    expect: resolve(provider, raw_model_id),
+                }),
+            })
+            .collect();
+        let mut json = serde_json::to_string_pretty(&entries)
+            .expect("corpus entries serialize as pretty JSON");
+        json.push('\n');
+        json
+    }
+
+    /// Absolute path of the committed corpus, from the crate root at compile
+    /// time — the same file [`CORPUS_JSON`] embeds, so the regen recipe writes
+    /// exactly what the drift gate reads.
+    fn corpus_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/normative-corpus.json")
     }
 
     #[test]
@@ -518,47 +712,44 @@ mod tests {
     }
 
     #[test]
-    fn corpus_vectors_all_resolve_as_expected() {
-        let entries = corpus();
-        let executable: Vec<&CorpusEntry> = entries.iter().filter(|e| e.expect.is_some()).collect();
+    fn corpus_matches_generated_snapshot() {
+        // Drift gate: the committed corpus must be byte-identical to what the
+        // production resolver generates right now. A byte match proves every
+        // `expect` in the file is the resolver's current answer — the same
+        // cross-language contract the old hand-maintained corpus enforced,
+        // now impossible to hand-edit out of sync. `just regen-model-corpus`
+        // rewrites the file from this exact generator.
         assert_eq!(
-            executable.len(),
-            103,
+            CORPUS_JSON,
+            generate_corpus_json(),
+            "scripts/normative-corpus.json is out of date — run `just regen-model-corpus` and commit the result"
+        );
+    }
+
+    #[test]
+    fn corpus_has_exactly_103_executable_vectors() {
+        // Locks the vector count so a silent INPUTS edit can't quietly drop
+        // coverage; must equal the gate in the TS harness
+        // (modelCapabilitiesCorpus.test.mjs).
+        let vectors = INPUTS
+            .iter()
+            .filter(|q| matches!(q, Q::Vector { .. }))
+            .count();
+        assert_eq!(
+            vectors, 103,
             "corpus executable-vector count changed; update this gate deliberately"
         );
-        for entry in executable {
-            let id = entry.id.as_deref().unwrap_or("<no-id>");
-            let provider = entry.provider.as_deref().unwrap_or("");
-            let model = entry.raw_model_id.as_deref().unwrap_or("");
-            let expect = entry.expect.as_ref().unwrap();
-            let got = resolve(provider, model);
-            assert_eq!(
-                got.thinking_mode, expect.thinking_mode,
-                "{id}: thinking_mode"
-            );
-            assert_eq!(
-                got.supported_efforts,
-                expect.supported_efforts.as_slice(),
-                "{id}: supported_efforts"
-            );
-            assert_eq!(
-                got.default_effort, expect.default_effort,
-                "{id}: default_effort"
-            );
-            assert_eq!(
-                got.databricks_v2_wire_route, expect.databricks_v2_wire_route,
-                "{id}: databricks_v2_wire_route"
-            );
-            assert_eq!(
-                got.normalization_policy, expect.normalization_policy,
-                "{id}: normalization_policy"
-            );
-            assert_eq!(
-                got.registry_label,
-                expect.registry_label.as_deref(),
-                "{id}: registry_label"
-            );
-        }
+    }
+
+    /// Rewrite `scripts/normative-corpus.json` from the production resolver.
+    /// `#[ignore]` so the ordinary test run only *checks* the committed bytes
+    /// (via `corpus_matches_generated_snapshot`); this is the writer half,
+    /// invoked by `just regen-model-corpus`.
+    #[test]
+    #[ignore = "writer, not a check — run via `just regen-model-corpus`"]
+    fn regen_corpus_file() {
+        std::fs::write(corpus_path(), generate_corpus_json())
+            .expect("write scripts/normative-corpus.json");
     }
 
     // --- Migrated relational/invariant tests (see 42-test inventory) ---

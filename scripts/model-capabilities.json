@@ -4,8 +4,7 @@
     "models_dev": "https://models.dev/api.json (retrieved 2026-07-31, SHA-256 d5a4974cd69f19b0f67713acaa6bb3b16e920defdc07ecbdf6b0a936181bb0e0)",
     "anthropic_thinking": "https://platform.claude.com/docs/en/build-with-claude/extended-thinking (July 2025)",
     "anthropic_effort": "https://platform.claude.com/docs/en/build-with-claude/effort (July 2025)",
-    "openai_reasoning": "https://platform.openai.com/docs/guides/reasoning (July 2025)",
-    "goose_known_models": "goose revision 6789d4af (crates/goose-providers/src/databricks_v2.rs:41-42) — two IDs: databricks-gpt-5-5, databricks-claude-opus-4-7"
+    "openai_reasoning": "https://platform.openai.com/docs/guides/reasoning (July 2025)"
   },
   "family_tokens": [
     "claude-",
@@ -393,7 +392,7 @@
       "normalization_policy": "none"
     }
   ],
-  "_comment_databricks_v2_known_models": "Authoritative list of Databricks v2 known model IDs. Mirrors goose DATABRICKS_V2_KNOWN_MODELS at revision 6789d4af (crates/goose-providers/src/databricks_v2.rs:41-42). Uniqueness enforced by validate_manifest(). Opt-in drift check against upstream goose is available as a standalone script.",
+  "_comment_databricks_v2_known_models": "Curated fallback catalog for Databricks v2: the model IDs offered when an authenticated api/ai-gateway/v2/endpoints call succeeds but returns an empty list (see catalog.rs authenticated_empty_v2_catalog). Both IDs also have full exact_records, so once offered they classify precisely. Uniqueness enforced by validate_manifest().",
   "databricks_v2_known_models": [
     "databricks-gpt-5-5",
     "databricks-claude-opus-4-7"
