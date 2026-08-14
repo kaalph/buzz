@@ -204,19 +204,24 @@ fn team_source_scope(team: &TeamRecord, definitions: &[&ManagedAgentRecord]) -> 
 /// Backfill `team_id` on instances whose persona is a team member but whose own
 /// `team_id` is unset. Returns the number of instances updated.
 ///
-/// Conservative: only sets an unset field, matching `detach.rs`. An instance
-/// already bound to a team is never re-pointed, so a persona shared across two
-/// teams keeps its existing binding.
+/// Conservative on two axes: it only sets an unset field (an instance already
+/// bound to a team is never re-pointed, so a persona shared across teams keeps
+/// its binding), and it only backfills when the persona belongs to *exactly
+/// one* team. The product permits one persona under multiple teams with
+/// distinct instructions, so a legacy unbound instance whose persona spans two
+/// teams has no evidence selecting either — JSON team order is not ownership.
+/// Such a persona is left unbound and logged; the command-time backfill on an
+/// explicit add supplies the intended team going forward.
 fn backfill_instance_team_ids(teams: &[TeamRecord], agents: &mut [ManagedAgentRecord]) -> usize {
-    // persona_id → team_id, first team wins for a persona in multiple teams
-    // (deterministic by team order; the conservative is_none() guard below
-    // means only unbound instances are touched anyway).
-    let mut persona_to_team: HashMap<&str, &str> = HashMap::new();
+    // persona_id → the sole team referencing it, or None once a second team is
+    // seen (ambiguous → never backfilled).
+    let mut persona_to_team: HashMap<&str, Option<&str>> = HashMap::new();
     for team in teams {
         for persona_id in &team.persona_ids {
             persona_to_team
                 .entry(persona_id.as_str())
-                .or_insert(team.id.as_str());
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(team.id.as_str()));
         }
     }
 
@@ -228,9 +233,17 @@ fn backfill_instance_team_ids(teams: &[TeamRecord], agents: &mut [ManagedAgentRe
         let Some(persona_id) = agent.persona_id.as_deref() else {
             continue;
         };
-        if let Some(team_id) = persona_to_team.get(persona_id) {
-            agent.team_id = Some((*team_id).to_string());
-            backfilled += 1;
+        match persona_to_team.get(persona_id) {
+            Some(Some(team_id)) => {
+                agent.team_id = Some((*team_id).to_string());
+                backfilled += 1;
+            }
+            Some(None) => eprintln!(
+                "buzz-desktop: team-membership-repair: leaving instance {:?} unbound — persona \
+                 {persona_id:?} spans multiple teams",
+                agent.pubkey
+            ),
+            None => {}
         }
     }
     backfilled

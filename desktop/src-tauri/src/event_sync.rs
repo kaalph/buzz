@@ -19,26 +19,27 @@ pub fn run_event_sync(app: &tauri::AppHandle, owner_keys: &nostr::Keys, db_path:
     crate::managed_agents::reconcile::reconcile_agents_to_events(app, owner_keys, db_path);
 }
 
-/// Spawn the best-effort event reconcile off the synchronous Tauri setup path.
+/// Run the scoped event reconcile to completion on the blocking pool.
 ///
-/// The owner keys are cloned before spawning so the task never touches the
-/// `AppState::keys` mutex. The reconcile itself is still synchronous JSON,
-/// SQLite, and signing work, so it runs on the blocking pool rather than an
-/// async worker.
-pub fn spawn_event_sync(
+/// Callers that must not let downstream work observe a not-yet-retained disk
+/// state (e.g. `apply_workspace` before the frontend can start inbound history
+/// replay) await this so the repaired local heads are durably retained — with a
+/// superseding `monotonic_created_at` — before an old relay head can race in.
+/// The owner keys are moved in so the task never touches the `AppState::keys`
+/// mutex; the reconcile itself is synchronous JSON/SQLite/signing work, so it
+/// runs on the blocking pool rather than an async worker.
+pub async fn run_event_sync_blocking(
     app: tauri::AppHandle,
     owner_keys: nostr::Keys,
     db_path: std::path::PathBuf,
 ) {
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
-            run_event_sync(&app, &owner_keys, &db_path);
-        })
-        .await
-        {
-            eprintln!("buzz-desktop: event-sync: spawn_blocking failed: {e}");
-        }
-    });
+    if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
+        run_event_sync(&app, &owner_keys, &db_path);
+    })
+    .await
+    {
+        eprintln!("buzz-desktop: event-sync: spawn_blocking failed: {e}");
+    }
 }
 
 /// Reconcile `personas.json` into the persona-event retention store.

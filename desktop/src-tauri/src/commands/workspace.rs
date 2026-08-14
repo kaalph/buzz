@@ -224,11 +224,21 @@ pub async fn apply_workspace(
             // stranded tombstones and archive requests publish on this boot
             // instead of being abandoned by the storage cutover.
             migrate_legacy_retention_into(&restore_app, &scope);
-            crate::event_sync::spawn_event_sync(
+            // Await the reconcile to completion — do NOT spawn it. The boot
+            // migration may have repaired team membership on disk; the frontend
+            // starts inbound history replay the moment `useCommunityInit`
+            // observes the applied workspace, and an old relay team head could
+            // otherwise win that race and overwrite the repaired `persona_ids`
+            // before the disk→retention reconcile durably retains the corrected
+            // head (with a superseding `monotonic_created_at`). Retaining first
+            // means `retain_inbound_event`'s equal/older guard rejects the stale
+            // head instead of applying it.
+            crate::event_sync::run_event_sync_blocking(
                 restore_app.clone(),
                 scope.owner_keys,
                 scope.db_path,
             )
+            .await;
         }
         Err(error) => {
             eprintln!("buzz-desktop: scoped event-sync unavailable after workspace apply: {error}");

@@ -273,6 +273,36 @@ fn backfills_null_team_id_but_never_re_points_a_bound_instance() {
     );
 }
 
+/// A legacy unbound instance whose persona belongs to *two* teams is left
+/// unbound: JSON team order is not ownership evidence, and the product permits
+/// one persona under multiple teams with distinct instructions. Its team
+/// sibling — a persona in only one team — is still backfilled in the same pass.
+#[test]
+fn leaves_unbound_instance_of_a_multi_team_persona_unbound() {
+    let dir = tempfile::tempdir().unwrap();
+    write_teams_json(
+        dir.path(),
+        &serde_json::json!([
+            team(TEAM_ID, &["sietch-tabr:duncan", "sietch-tabr:paul"]),
+            team("other-team", &["sietch-tabr:duncan"]),
+        ]),
+    );
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([
+            definition("sietch-tabr:duncan", ST, "duncan"),
+            definition("sietch-tabr:paul", ST, "paul"),
+            instance('d', "sietch-tabr:duncan", None),
+            instance('p', "sietch-tabr:paul", None),
+        ]),
+    );
+
+    // Only Paul (single-team) is backfilled; Duncan (two teams) stays unbound.
+    assert_eq!(repair_team_membership_in_dir(&base(dir.path())).unwrap(), 1);
+    assert_eq!(instance_team_id(dir.path(), 'd'), None);
+    assert_eq!(instance_team_id(dir.path(), 'p').as_deref(), Some(TEAM_ID));
+}
+
 /// A store that needs no repair is a clean no-op: `Ok(0)`, no write, no backup.
 #[test]
 fn clean_store_is_a_no_op() {
