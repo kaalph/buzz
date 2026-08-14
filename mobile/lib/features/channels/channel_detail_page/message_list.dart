@@ -38,9 +38,16 @@ class _MessageList extends HookConsumerWidget {
     final displayEntries = groupMembershipTimelineEntries(entries);
     final itemScrollController = useMemoized(ItemScrollController.new);
     final itemPositionsListener = useMemoized(ItemPositionsListener.create);
+    final stickyDateHeaderState = useValueNotifier(
+      StickyDateHeaderState.hidden,
+    );
+    final stickyDayTimestamp = useValueNotifier<int?>(null);
+    final timelineViewportHeight = useRef(MediaQuery.sizeOf(context).height);
     final isLoadingOlder = useState(false);
     final isAtLatest = useState(true);
+    final isJumpToLatestVisible = useState(false);
     final hasUserScrolled = useState(false);
+    final distanceFromLatest = useRef(0.0);
     final followsLatest = useRef(
       initialMessageId == null && initialThreadRootId == null,
     );
@@ -58,6 +65,38 @@ class _MessageList extends HookConsumerWidget {
     final hasUnreadDeepLink =
         initialMessageId != null || initialThreadRootId != null;
     final notifier = ref.read(channelMessagesProvider(channelId).notifier);
+    final dayTimestampByReversedIndex = <int, int>{};
+    final dayStartByReversedIndex = <int, int>{};
+    final dayHeaderTimestampByReversedIndex = <int, int>{};
+    var currentDayTimestamp =
+        displayEntries.firstOrNull?.first.message.createdAt;
+    var currentDayStartIndex = displayEntries.isEmpty
+        ? -1
+        : displayEntries.length - 1;
+    for (
+      var chronologicalIndex = 0;
+      chronologicalIndex < displayEntries.length;
+      chronologicalIndex += 1
+    ) {
+      final message = displayEntries[chronologicalIndex].first.message;
+      final previousMessage = chronologicalIndex > 0
+          ? displayEntries[chronologicalIndex - 1].last.message
+          : null;
+      final startsDay =
+          previousMessage == null ||
+          !isSameDay(previousMessage.createdAt, message.createdAt);
+      final reversedIndex = displayEntries.length - 1 - chronologicalIndex;
+      if (startsDay) {
+        currentDayTimestamp = message.createdAt;
+        currentDayStartIndex = reversedIndex;
+        dayHeaderTimestampByReversedIndex[reversedIndex] = message.createdAt;
+      }
+      final dayTimestamp = currentDayTimestamp;
+      if (dayTimestamp != null) {
+        dayTimestampByReversedIndex[reversedIndex] = dayTimestamp;
+        dayStartByReversedIndex[reversedIndex] = currentDayStartIndex;
+      }
+    }
 
     useEffect(
       () {
@@ -156,10 +195,118 @@ class _MessageList extends HookConsumerWidget {
     }
 
     double latestAlignment() {
-      final viewportHeight = context.size?.height ?? 0;
+      final viewportHeight = timelineViewportHeight.value;
       return viewportHeight > 0
           ? (composerBottomInset / viewportHeight).clamp(0.0, 1.0).toDouble()
           : 0.0;
+    }
+
+    void updateStickyDateHeader(Iterable<ItemPosition> rawPositions) {
+      void setStickyDateHeader(
+        StickyDateHeaderState state, {
+        int? activeDayTimestamp,
+      }) {
+        stickyDateHeaderState.value = state;
+        stickyDayTimestamp.value = activeDayTimestamp;
+      }
+
+      final viewportHeight = timelineViewportHeight.value;
+      if (viewportHeight <= 0 || displayEntries.isEmpty) {
+        setStickyDateHeader(StickyDateHeaderState.hidden);
+        return;
+      }
+
+      final positions = rawPositions
+          .where(
+            (position) =>
+                position.index < displayEntries.length &&
+                position.itemLeadingEdge < 1 &&
+                position.itemTrailingEdge > 0,
+          )
+          .toList();
+      if (positions.isEmpty) {
+        if (!isLoadingOlder.value) {
+          setStickyDateHeader(StickyDateHeaderState.hidden);
+        }
+        return;
+      }
+
+      final stickyTop =
+          frostedAppBarHeight(
+            context,
+            titleContentHeight: appBarTitleContentHeight,
+          ) +
+          Grid.twelve;
+      double physicalTop(ItemPosition position) =>
+          viewportHeight * (1 - position.itemTrailingEdge);
+      double physicalBottom(ItemPosition position) =>
+          viewportHeight * (1 - position.itemLeadingEdge);
+
+      final positionAtStickyTop = positions
+          .where(
+            (position) =>
+                physicalTop(position) <= stickyTop &&
+                physicalBottom(position) > stickyTop,
+          )
+          .firstOrNull;
+      if (positionAtStickyTop == null) {
+        if (!isLoadingOlder.value) {
+          setStickyDateHeader(StickyDateHeaderState.hidden);
+        }
+        return;
+      }
+
+      final activeDayTimestamp =
+          dayTimestampByReversedIndex[positionAtStickyTop.index];
+      final activeDayStartIndex =
+          dayStartByReversedIndex[positionAtStickyTop.index];
+      if (activeDayTimestamp == null || activeDayStartIndex == null) {
+        setStickyDateHeader(StickyDateHeaderState.hidden);
+        return;
+      }
+
+      final activeHeaderPosition = positions
+          .where((position) => position.index == activeDayStartIndex)
+          .firstOrNull;
+      final oldestVisibleIndex = positions
+          .map((position) => position.index)
+          .reduce((a, b) => a > b ? a : b);
+      final activeHeaderHasCrossed = activeHeaderPosition != null
+          ? physicalTop(activeHeaderPosition) <= stickyTop
+          : activeDayStartIndex > oldestVisibleIndex;
+      if (!activeHeaderHasCrossed) {
+        setStickyDateHeader(StickyDateHeaderState.hidden);
+        return;
+      }
+
+      double? nextHeaderTop;
+      for (final position in positions) {
+        if (!dayHeaderTimestampByReversedIndex.containsKey(position.index) ||
+            position.index >= activeDayStartIndex) {
+          continue;
+        }
+        final top = physicalTop(position);
+        if (top <= stickyTop ||
+            (nextHeaderTop != null && top >= nextHeaderTop)) {
+          continue;
+        }
+        nextHeaderTop = top;
+      }
+
+      final stickyHeaderHeight = StickyDateHeader.heightOf(context);
+      final rawTranslateY = nextHeaderTop == null
+          ? 0.0
+          : min(0.0, nextHeaderTop - stickyTop - stickyHeaderHeight - 5);
+      final translateY = rawTranslateY
+          .clamp(-(stickyHeaderHeight + 5), 0.0)
+          .toDouble();
+      setStickyDateHeader(
+        StickyDateHeaderState(
+          label: formatDayHeading(activeDayTimestamp),
+          translateY: (translateY * 2).round() / 2,
+        ),
+        activeDayTimestamp: activeDayTimestamp,
+      );
     }
 
     Future<void> scrollToLatest() async {
@@ -176,6 +323,7 @@ class _MessageList extends HookConsumerWidget {
         );
         if (context.mounted && !hasUserScrolled.value) {
           isAtLatest.value = true;
+          isJumpToLatestVisible.value = false;
         }
       } finally {
         isAutoScrolling.value = false;
@@ -219,6 +367,34 @@ class _MessageList extends HookConsumerWidget {
       );
     }
 
+    void updateJumpToLatestVisibility(
+      Iterable<ItemPosition> positions, {
+      double? viewportDimension,
+    }) {
+      final latestIsVisible = positions.any(
+        (position) =>
+            position.index == 0 &&
+            position.itemLeadingEdge < 1 &&
+            position.itemTrailingEdge > latestAlignment(),
+      );
+      final viewportHeight = viewportDimension ?? timelineViewportHeight.value;
+      final visiblePageHeight = max(
+        0.0,
+        viewportHeight -
+            frostedAppBarHeight(
+              context,
+              titleContentHeight: appBarTitleContentHeight,
+            ) -
+            composerBottomInset,
+      );
+      final shouldShow =
+          !latestIsAtBoundary() &&
+          (!latestIsVisible || distanceFromLatest.value > visiblePageHeight);
+      if (isJumpToLatestVisible.value != shouldShow) {
+        isJumpToLatestVisible.value = shouldShow;
+      }
+    }
+
     void realignLatestAfterLayoutChange() {
       if (latestRealignmentQueued.value ||
           !followsLatest.value ||
@@ -242,41 +418,71 @@ class _MessageList extends HookConsumerWidget {
       });
     }
 
+    useEffect(
+      () {
+        void onPositionsChanged() {
+          final positions = itemPositionsListener.itemPositions.value;
+          if (positions.isEmpty) return;
+          updateStickyDateHeader(positions);
+          updateJumpToLatestVisibility(positions);
+          final nextIsAtLatest = latestIsAtBoundary();
+          if (showUnreadNavigation &&
+              nextIsAtLatest &&
+              detachedWhileUnreadShown.value) {
+            isUnreadNavigationDismissed.value = true;
+          }
+          if (nextIsAtLatest) {
+            if (!isAtLatest.value) isAtLatest.value = true;
+            if (isJumpToLatestVisible.value) {
+              isJumpToLatestVisible.value = false;
+            }
+          } else if (!followsLatest.value && isAtLatest.value) {
+            isAtLatest.value = false;
+          }
+
+          final oldestVisible = positions
+              .map((position) => position.index)
+              .reduce((a, b) => a > b ? a : b);
+          if (!hasUserScrolled.value ||
+              oldestVisible < displayEntries.length - 3 ||
+              isLoadingOlder.value) {
+            return;
+          }
+          final notifier = ref.read(
+            channelMessagesProvider(channelId).notifier,
+          );
+          if (notifier.reachedOldest) return;
+          isLoadingOlder.value = true;
+          notifier.fetchOlder().whenComplete(
+            () => isLoadingOlder.value = false,
+          );
+        }
+
+        var disposed = false;
+        itemPositionsListener.itemPositions.addListener(onPositionsChanged);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!disposed && context.mounted) onPositionsChanged();
+        });
+        return () {
+          disposed = true;
+          itemPositionsListener.itemPositions.removeListener(
+            onPositionsChanged,
+          );
+        };
+      },
+      [
+        channelId,
+        entries.length,
+        itemPositionsListener,
+        appBarTitleContentHeight,
+      ],
+    );
+
     useEffect(() {
-      void onPositionsChanged() {
-        final positions = itemPositionsListener.itemPositions.value;
-        if (positions.isEmpty) return;
-        final nextIsAtLatest = latestIsAtBoundary();
-        if (showUnreadNavigation &&
-            nextIsAtLatest &&
-            detachedWhileUnreadShown.value) {
-          isUnreadNavigationDismissed.value = true;
-        }
-        if (nextIsAtLatest) {
-          if (!isAtLatest.value) isAtLatest.value = true;
-        } else if (!followsLatest.value && isAtLatest.value) {
-          isAtLatest.value = false;
-        }
-
-        final oldestVisible = positions
-            .map((position) => position.index)
-            .reduce((a, b) => a > b ? a : b);
-        if (!hasUserScrolled.value ||
-            oldestVisible < displayEntries.length - 3 ||
-            isLoadingOlder.value) {
-          return;
-        }
-        final notifier = ref.read(channelMessagesProvider(channelId).notifier);
-        if (notifier.reachedOldest) return;
-        isLoadingOlder.value = true;
-        notifier.fetchOlder().whenComplete(() => isLoadingOlder.value = false);
-      }
-
-      itemPositionsListener.itemPositions.addListener(onPositionsChanged);
-      return () => itemPositionsListener.itemPositions.removeListener(
-        onPositionsChanged,
-      );
-    }, [channelId, entries.length, itemPositionsListener]);
+      stickyDateHeaderState.value = StickyDateHeaderState.hidden;
+      stickyDayTimestamp.value = null;
+      return null;
+    }, [channelId]);
 
     // Composer size changes and keyboard metrics changes arrive in separate
     // layout passes. Preserve the latest-message anchor for both, but only
@@ -395,8 +601,25 @@ class _MessageList extends HookConsumerWidget {
 
     return Stack(
       children: [
-        NotificationListener<ScrollNotification>(
+        NotificationListener<Notification>(
           onNotification: (notification) {
+            if (notification is ScrollMetricsNotification) {
+              timelineViewportHeight.value =
+                  notification.metrics.viewportDimension;
+              return false;
+            }
+            if (notification is! ScrollNotification) return false;
+            timelineViewportHeight.value =
+                notification.metrics.viewportDimension;
+            distanceFromLatest.value = max(
+              0.0,
+              notification.metrics.pixels -
+                  notification.metrics.minScrollExtent,
+            );
+            updateJumpToLatestVisibility(
+              itemPositionsListener.itemPositions.value,
+              viewportDimension: notification.metrics.viewportDimension,
+            );
             if (notification is UserScrollNotification &&
                 notification.direction != ScrollDirection.idle) {
               hasUserScrolled.value = true;
@@ -477,7 +700,11 @@ class _MessageList extends HookConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (showDayDivider)
-                        DayDivider(label: formatDayHeading(message.createdAt)),
+                        DayDivider(
+                          label: formatDayHeading(message.createdAt),
+                          dayTimestamp: message.createdAt,
+                          stickyDayTimestamp: stickyDayTimestamp,
+                        ),
                       if (message.isSystem)
                         _SystemMessageRow(
                           message: message,
@@ -521,6 +748,21 @@ class _MessageList extends HookConsumerWidget {
             ),
           ),
         ),
+        if (!showUnreadNavigation)
+          Positioned(
+            left: 0,
+            right: 0,
+            top:
+                frostedAppBarHeight(
+                  context,
+                  titleContentHeight: appBarTitleContentHeight,
+                ) +
+                Grid.twelve,
+            child: StickyDateHeader(
+              key: const ValueKey('channel-sticky-date-header'),
+              state: stickyDateHeaderState,
+            ),
+          ),
         if (showUnreadNavigation)
           Positioned(
             left: 0,
@@ -544,80 +786,42 @@ class _MessageList extends HookConsumerWidget {
               ),
             ),
           )
-        else if (!isAtLatest.value)
+        else
           Positioned(
             left: 0,
             right: 0,
             bottom: composerBottomInset + Grid.xs,
             child: Center(
-              child: _JumpToLatestButton(
-                key: const ValueKey('channel-jump-to-latest'),
-                onPressed: scrollToLatest,
+              child: AnimatedSwitcher(
+                key: const ValueKey('channel-jump-to-latest-switcher'),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 180),
+                reverseDuration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 160),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(
+                    scale: _JumpToLatestScaleAnimation(animation),
+                    alignment: Alignment.bottomCenter,
+                    child: child,
+                  ),
+                ),
+                child: !isJumpToLatestVisible.value
+                    ? const SizedBox.shrink(
+                        key: ValueKey('channel-jump-to-latest-hidden'),
+                      )
+                    : JumpToLatestButton(
+                        key: const ValueKey('channel-jump-to-latest'),
+                        onPressed: scrollToLatest,
+                      ),
               ),
             ),
           ),
       ],
-    );
-  }
-}
-
-class _JumpToLatestButton extends StatelessWidget {
-  final VoidCallback onPressed;
-
-  const _JumpToLatestButton({required this.onPressed, super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(Radii.full);
-    return Semantics(
-      button: true,
-      child: ClipRRect(
-        borderRadius: borderRadius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            key: const ValueKey('channel-jump-to-latest-surface'),
-            decoration: BoxDecoration(
-              color: context.colors.surface.withValues(alpha: 0.5),
-              borderRadius: borderRadius,
-              border: Border.all(
-                color: Colors.black.withValues(alpha: 0.04),
-                width: 1,
-              ),
-            ),
-            child: Material(
-              type: MaterialType.transparency,
-              child: InkWell(
-                onTap: onPressed,
-                borderRadius: borderRadius,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: Grid.gutter,
-                    vertical: Grid.xxs,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        LucideIcons.arrowDown,
-                        size: 16,
-                        color: context.colors.onSurface,
-                      ),
-                      const SizedBox(width: Grid.half),
-                      Text(
-                        'Latest',
-                        style: context.textTheme.labelLarge?.copyWith(
-                          color: context.colors.onSurface,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -629,4 +833,17 @@ class _ChannelLatestMetricsObserver with WidgetsBindingObserver {
 
   @override
   void didChangeMetrics() => onMetricsChanged();
+}
+
+class _JumpToLatestScaleAnimation extends Animation<double>
+    with AnimationWithParentMixin<double> {
+  @override
+  final Animation<double> parent;
+
+  _JumpToLatestScaleAnimation(this.parent);
+
+  @override
+  double get value => parent.status == AnimationStatus.reverse
+      ? parent.value
+      : 0.92 + (0.08 * parent.value);
 }
