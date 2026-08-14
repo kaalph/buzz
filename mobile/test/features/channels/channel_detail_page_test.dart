@@ -2395,6 +2395,64 @@ void main() {
       },
     );
 
+    testWidgets('ignores scroll notifications from nested message content', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final codeLine = List.filled(80, 'nestedScrollMarker').join('_');
+      final initialMessage = _textMsg(
+        id: 'code-message',
+        pubkey: 'alice',
+        content: ['```dart', codeLine, '```'].join('\n'),
+      );
+      final messagesNotifier = _FakeMessagesNotifier([initialMessage]);
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          messagesNotifier: messagesNotifier,
+          users: const {
+            'alice': UserProfile(pubkey: 'alice', displayName: 'Alice'),
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final codeScroller = find.ancestor(
+        of: findRichText('nestedScrollMarker'),
+        matching: find.byType(SingleChildScrollView),
+      );
+      expect(codeScroller, findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('channel-jump-to-latest')),
+        findsNothing,
+      );
+
+      await tester.drag(codeScroller, const Offset(-800, 0));
+      await tester.pumpAndSettle();
+
+      messagesNotifier.setMessages([
+        initialMessage,
+        _textMsg(
+          id: 'new-message',
+          pubkey: 'alice',
+          content: 'Newest message',
+          createdAt: 2000,
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(findRichText('Newest message'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('channel-jump-to-latest')),
+        findsNothing,
+      );
+    });
+
     testWidgets('can jump back to latest after a non-drag user scroll', (
       tester,
     ) async {

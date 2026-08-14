@@ -604,11 +604,15 @@ class _MessageList extends HookConsumerWidget {
         NotificationListener<Notification>(
           onNotification: (notification) {
             if (notification is ScrollMetricsNotification) {
+              if (notification.depth != 0) return false;
               timelineViewportHeight.value =
                   notification.metrics.viewportDimension;
               return false;
             }
-            if (notification is! ScrollNotification) return false;
+            if (notification is! ScrollNotification ||
+                notification.depth != 0) {
+              return false;
+            }
             timelineViewportHeight.value =
                 notification.metrics.viewportDimension;
             distanceFromLatest.value = max(
