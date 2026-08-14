@@ -4,8 +4,9 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     managed_agents::{
-        delete_team_with_cascade, ensure_persona_ids_are_active, load_personas, load_teams,
-        save_teams, try_regenerate_nest, CreateTeamRequest, TeamRecord, UpdateTeamRequest,
+        delete_team_with_cascade, ensure_persona_ids_are_active, load_managed_agents,
+        load_personas, load_teams, save_managed_agents, save_teams, try_regenerate_nest,
+        CreateTeamRequest, TeamRecord, UpdateTeamRequest,
     },
     util::now_iso,
 };
@@ -23,6 +24,39 @@ fn trim_optional(value: Option<String>) -> Option<String> {
         let trimmed = candidate.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     })
+}
+
+/// Backfill `team_id` on already-running instances of a team's members whose own
+/// `team_id` is unset. Adding a persona to a team records it on the team but does
+/// not touch the persona's live instances; without this, an added persona spawns
+/// without team instructions (`spawn_snapshot::effective_team_instructions` keys
+/// on `record.team_id`). Runs inside the caller's held `managed_agents_store_lock`
+/// after `save_teams`. Conservative — sets only an unset field, so a persona
+/// shared across teams keeps its existing binding.
+fn backfill_member_instance_team_ids(
+    app: &AppHandle,
+    team_id: &str,
+    persona_ids: &[String],
+) -> Result<(), String> {
+    let mut records = load_managed_agents(app)?;
+    let mut changed = false;
+    for record in records.iter_mut() {
+        if record.pubkey.is_empty() || record.team_id.is_some() {
+            continue;
+        }
+        if record
+            .persona_id
+            .as_deref()
+            .is_some_and(|id| persona_ids.iter().any(|p| p == id))
+        {
+            record.team_id = Some(team_id.to_string());
+            changed = true;
+        }
+    }
+    if changed {
+        save_managed_agents(app, &records)?;
+    }
+    Ok(())
 }
 
 /// Retain a freshly authored team event in the local store, flagged for relay
@@ -173,6 +207,7 @@ pub async fn create_team(input: CreateTeamRequest, app: AppHandle) -> Result<Tea
         };
         teams.push(team.clone());
         save_teams(&app, &teams)?;
+        backfill_member_instance_team_ids(&app, &team.id, &team.persona_ids)?;
         // Created teams are always non-builtin; publish to the relay.
         retain_team_pending(&app, &state, &team);
         Ok(team)
@@ -210,6 +245,7 @@ pub async fn update_team(input: UpdateTeamRequest, app: AppHandle) -> Result<Tea
 
         let updated = team.clone();
         save_teams(&app, &teams)?;
+        backfill_member_instance_team_ids(&app, &updated.id, &updated.persona_ids)?;
         // Built-in teams are not owner-authored — never publish them.
         if !updated.is_builtin {
             retain_team_pending(&app, &state, &updated);

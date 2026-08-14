@@ -149,8 +149,7 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     // ensures the dev nest boots with the correct workspace on its first launch,
     // matching what the prod nest had configured. Skip-if-dest-exists so it is
     // idempotent and never clobbers a value the dev nest already set explicitly.
-    // Uses the composed helper so the gate + migration run through the same
-    // code path that the behavioral test exercises.
+    // Uses the composed helper so gate + migration share the tested code path.
     if let (Some(home), Some(dev_nest)) = (dirs::home_dir(), crate::managed_agents::nest_dir()) {
         maybe_migrate_dev_repos_dir(is_dev, reset_completed, &home, &dev_nest);
     }
@@ -183,10 +182,10 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     strip_baked_team_instructions(app);
     refresh_builtin_agent_avatars(app);
     // B5: manufacture definitions for standalone agents AFTER the fold (so
-    // pre-existing definition slugs are present for collision checks) and
-    // before event sync republishes — the backfilled link is what flips the
-    // 30177 projection to its slim shape.
+    // pre-existing definition slugs exist for collision checks) and before event
+    // sync republishes — the backfilled link flips the 30177 projection.
     backfill_standalone_agents(app);
+    team_membership::repair_team_membership(app);
     detach_directory_backed_teams(app);
     reconcile_provider_mcp_commands(app);
     reconcile_databricks_v1_to_v2(app);
@@ -1376,6 +1375,7 @@ mod backfill;
 pub use backfill::backfill_standalone_agents;
 mod detach;
 pub use detach::detach_directory_backed_teams;
+mod team_membership;
 mod team_suffix;
 pub use team_suffix::strip_baked_team_instructions;
 
