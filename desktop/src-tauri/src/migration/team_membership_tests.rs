@@ -303,6 +303,28 @@ fn leaves_unbound_instance_of_a_multi_team_persona_unbound() {
     assert_eq!(instance_team_id(dir.path(), 'p').as_deref(), Some(TEAM_ID));
 }
 
+/// A persona listed twice within a *single* team is not ambiguity — the storage
+/// boundary does not dedupe `persona_ids`. Its unbound instance is still bound
+/// to that one team; only a *distinct* second team poisons the entry.
+#[test]
+fn same_team_duplicate_persona_id_still_backfills() {
+    let dir = tempfile::tempdir().unwrap();
+    write_teams_json(
+        dir.path(),
+        &serde_json::json!([team(TEAM_ID, &["sietch-tabr:duncan", "sietch-tabr:duncan"])]),
+    );
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([
+            definition("sietch-tabr:duncan", ST, "duncan"),
+            instance('d', "sietch-tabr:duncan", None),
+        ]),
+    );
+
+    assert_eq!(repair_team_membership_in_dir(&base(dir.path())).unwrap(), 1);
+    assert_eq!(instance_team_id(dir.path(), 'd').as_deref(), Some(TEAM_ID));
+}
+
 /// A store that needs no repair is a clean no-op: `Ok(0)`, no write, no backup.
 #[test]
 fn clean_store_is_a_no_op() {

@@ -13,10 +13,22 @@ use std::path::Path;
 /// `sync_team_personas` wrote in [`crate::migration::run_boot_migrations`]
 /// (see its `# Ordering` guard). Event signing needs the resolved owner keys,
 /// so this runs after identity resolution, not in the boot migrations.
-pub fn run_event_sync(app: &tauri::AppHandle, owner_keys: &nostr::Keys, db_path: &Path) {
+pub fn run_event_sync(
+    app: &tauri::AppHandle,
+    owner_keys: &nostr::Keys,
+    db_path: &Path,
+) -> Result<(), String> {
+    // Persona and agent legs stay best-effort: they log and swallow, and their
+    // failure does not undo the boot team-membership repair. The team leg is
+    // fatal — it establishes the superseding local head (a monotonic
+    // `created_at`) that lets `retain_inbound_event`'s equal/older guard reject
+    // a stale relay roster. If it fails, the caller must not let the frontend
+    // expose the community and start inbound replay against an un-superseded
+    // disk state.
     migrate_personas_to_events(app, owner_keys, db_path);
-    migrate_teams_to_events(app, owner_keys, db_path);
+    migrate_teams_to_events(app, owner_keys, db_path)?;
     crate::managed_agents::reconcile::reconcile_agents_to_events(app, owner_keys, db_path);
+    Ok(())
 }
 
 /// Run the scoped event reconcile to completion on the blocking pool.
@@ -28,18 +40,17 @@ pub fn run_event_sync(app: &tauri::AppHandle, owner_keys: &nostr::Keys, db_path:
 /// The owner keys are moved in so the task never touches the `AppState::keys`
 /// mutex; the reconcile itself is synchronous JSON/SQLite/signing work, so it
 /// runs on the blocking pool rather than an async worker.
+///
+/// Returns `Err` if the task fails to join or the fatal team leg errors, so the
+/// caller can withhold community exposure until the superseding head is durable.
 pub async fn run_event_sync_blocking(
     app: tauri::AppHandle,
     owner_keys: nostr::Keys,
     db_path: std::path::PathBuf,
-) {
-    if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
-        run_event_sync(&app, &owner_keys, &db_path);
-    })
-    .await
-    {
-        eprintln!("buzz-desktop: event-sync: spawn_blocking failed: {e}");
-    }
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || run_event_sync(&app, &owner_keys, &db_path))
+        .await
+        .map_err(|e| format!("event-sync: spawn_blocking failed: {e}"))?
 }
 
 /// Reconcile `personas.json` into the persona-event retention store.
@@ -220,21 +231,23 @@ fn migrate_personas_in_dir_at(
 ///
 /// Must run after the persisted identity is resolved (it signs each event with
 /// the owner's keys).
-pub fn migrate_teams_to_events(app: &tauri::AppHandle, keys: &nostr::Keys, db_path: &Path) {
+pub fn migrate_teams_to_events(
+    app: &tauri::AppHandle,
+    keys: &nostr::Keys,
+    db_path: &Path,
+) -> Result<(), String> {
     use crate::managed_agents::managed_agents_base_dir;
 
-    let Ok(base_dir) = managed_agents_base_dir(app) else {
-        return;
-    };
+    let base_dir = managed_agents_base_dir(app)
+        .map_err(|e| format!("team-event-migration: base dir unavailable: {e}"))?;
 
     match migrate_teams_in_dir_at(&base_dir, keys, db_path) {
-        Ok(0) => {}
+        Ok(0) => Ok(()),
         Ok(migrated) => {
             eprintln!("buzz-desktop: team-event-migration: {migrated} teams migrated to retention");
+            Ok(())
         }
-        Err(e) => {
-            eprintln!("buzz-desktop: team-event-migration: {e}");
-        }
+        Err(e) => Err(format!("team-event-migration: {e}")),
     }
 }
 

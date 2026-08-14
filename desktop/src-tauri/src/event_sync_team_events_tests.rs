@@ -134,6 +134,20 @@ fn migrate_teams_no_file_is_noop() {
     assert_eq!(migrate_teams_in_dir(base.path(), &keys).unwrap(), 0);
 }
 
+/// Error-contract for the fatal team leg. `run_event_sync` propagates a team
+/// leg failure via `?`, and `apply_workspace` returns that `Err` so the
+/// frontend never exposes the community against an un-superseded disk state.
+/// This proves the leg genuinely surfaces failure (rather than logging and
+/// swallowing) on an unreadable store — the precondition that made the
+/// propagation load-bearing.
+#[test]
+fn migrate_teams_surfaces_error_on_unparseable_store() {
+    let base = tempfile::tempdir().unwrap();
+    std::fs::write(base.path().join("teams.json"), "{ not valid json").unwrap();
+    let keys = nostr::Keys::generate();
+    assert!(migrate_teams_in_dir(base.path(), &keys).is_err());
+}
+
 /// Build a signed inbound team head at an explicit `created_at`, mirroring a
 /// relay replay of a stale, pre-namespacing roster.
 fn stale_inbound_head(
@@ -176,14 +190,19 @@ fn stale_inbound_head(
     }
 }
 
-/// Finding-1 ordering guarantee. `apply_workspace` awaits the disk→retention
-/// reconcile before `useCommunityInit` can expose the community and start
-/// inbound history replay. This test blocks the two lanes in that order and
-/// proves the ordering is load-bearing: reconcile-first, the repaired head's
-/// monotonic timestamp makes a stale relay head lose; inbound-first, the same
-/// stale head would win and restore bare membership.
+/// Finding-1 retention-precedence guarantee. This proves the *mechanic* the
+/// awaited-reconcile ordering relies on — it does not itself exercise
+/// `apply_workspace` (an `AppHandle`-level path). Given the boot reconcile has
+/// retained the repaired namespaced roster with a monotonic `created_at`
+/// (reconcile-first), a stale relay head replayed afterward is older, so
+/// `retain_inbound_event` skips it and the repaired roster stays. The
+/// inbound-first lane is the counterfactual the ordering closes: with no
+/// repaired head retained yet, the very same stale head is applied and restores
+/// bare membership. Retention order is the only difference between the lanes;
+/// `apply_workspace` awaiting the reconcile (see `commands/workspace.rs`) is
+/// what forces the reconcile-first order in production.
 #[test]
-fn awaited_reconcile_makes_stale_inbound_team_head_lose() {
+fn reconcile_first_makes_stale_inbound_team_head_lose() {
     use crate::managed_agents::retention::{
         get_retained_event, open_retention_db, retain_inbound_event, InboundOutcome,
     };

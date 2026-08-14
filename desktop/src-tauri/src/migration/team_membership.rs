@@ -213,14 +213,22 @@ fn team_source_scope(team: &TeamRecord, definitions: &[&ManagedAgentRecord]) -> 
 /// Such a persona is left unbound and logged; the command-time backfill on an
 /// explicit add supplies the intended team going forward.
 fn backfill_instance_team_ids(teams: &[TeamRecord], agents: &mut [ManagedAgentRecord]) -> usize {
-    // persona_id → the sole team referencing it, or None once a second team is
-    // seen (ambiguous → never backfilled).
+    // persona_id → the sole team referencing it, or None once a *distinct*
+    // second team is seen (ambiguous → never backfilled). A persona listed
+    // twice within one team is not ambiguity — duplicates are not prohibited at
+    // the storage boundary (`ensure_persona_ids_are_active` checks existence
+    // only; create/update/inbound persist the vector unchanged), so poisoning
+    // on a same-team repeat would strand a legitimately single-team instance.
     let mut persona_to_team: HashMap<&str, Option<&str>> = HashMap::new();
     for team in teams {
         for persona_id in &team.persona_ids {
             persona_to_team
                 .entry(persona_id.as_str())
-                .and_modify(|slot| *slot = None)
+                .and_modify(|slot| {
+                    if slot.is_some_and(|seen| seen != team.id.as_str()) {
+                        *slot = None;
+                    }
+                })
                 .or_insert(Some(team.id.as_str()));
         }
     }
