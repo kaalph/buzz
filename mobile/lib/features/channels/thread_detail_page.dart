@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -37,6 +39,11 @@ import 'small_avatar.dart';
 import 'timeline_message.dart';
 
 part 'thread_detail_helpers.dart';
+
+const _landingHighlightDuration = Duration(seconds: 3);
+const _landingHighlightDelay = Duration(milliseconds: 50);
+const _landingHighlightTransitionDuration = Duration(milliseconds: 300);
+const _landingHighlightOpacity = 0.12 * 0.4;
 
 /// Full-screen thread detail page.
 ///
@@ -95,6 +102,68 @@ class ThreadDetailPage extends HookConsumerWidget {
               threadHead,
             ...fetchedReplies,
           ];
+    final initialMessageIsPresent =
+        initialMessageId != null &&
+        allMsgs.any((message) => message.id == initialMessageId);
+    final routeAnimation = ModalRoute.of(context)?.animation;
+    final reducedLandingHighlightMotion = MediaQuery.disableAnimationsOf(
+      context,
+    );
+    final highlightedMessageId = useState<String?>(null);
+    useEffect(
+      () {
+        final messageId = initialMessageId;
+        if (messageId == null || !initialMessageIsPresent) return null;
+        var disposed = false;
+        Timer? revealTimer;
+        Timer? dismissTimer;
+
+        void revealHighlight() {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (disposed) return;
+            revealTimer = Timer(_landingHighlightDelay, () {
+              if (disposed) return;
+              highlightedMessageId.value = messageId;
+              dismissTimer = Timer(
+                _landingHighlightDuration +
+                    (reducedLandingHighlightMotion
+                        ? Duration.zero
+                        : _landingHighlightTransitionDuration),
+                () {
+                  if (!disposed) highlightedMessageId.value = null;
+                },
+              );
+            });
+          });
+        }
+
+        void handleRouteStatus(AnimationStatus status) {
+          if (status != AnimationStatus.completed) return;
+          routeAnimation?.removeStatusListener(handleRouteStatus);
+          revealHighlight();
+        }
+
+        if (routeAnimation == null ||
+            routeAnimation.status == AnimationStatus.completed) {
+          revealHighlight();
+        } else {
+          routeAnimation.addStatusListener(handleRouteStatus);
+        }
+
+        return () {
+          disposed = true;
+          routeAnimation?.removeStatusListener(handleRouteStatus);
+          revealTimer?.cancel();
+          dismissTimer?.cancel();
+        };
+      },
+      [
+        initialMessageId,
+        initialMessageIsPresent,
+        reducedLandingHighlightMotion,
+        routeAnimation,
+      ],
+    );
 
     final childrenByParent = <String, List<TimelineMessage>>{};
     for (final msg in allMsgs) {
@@ -460,7 +529,7 @@ class ThreadDetailPage extends HookConsumerWidget {
                                   currentPubkey: currentPubkey,
                                   showAuthor: true,
                                   isHighlighted:
-                                      liveHead.id == initialMessageId,
+                                      liveHead.id == highlightedMessageId.value,
                                   allMessages: allMsgs,
                                   isMember: isMember,
                                   isArchived: isArchived,
@@ -535,7 +604,8 @@ class ThreadDetailPage extends HookConsumerWidget {
                                 channelId: channelId,
                                 currentPubkey: currentPubkey,
                                 showAuthor: showAuthor,
-                                isHighlighted: reply.id == initialMessageId,
+                                isHighlighted:
+                                    reply.id == highlightedMessageId.value,
                                 allMessages: allMsgs,
                                 isMember: isMember,
                                 isArchived: isArchived,
@@ -602,119 +672,7 @@ class ThreadDetailPage extends HookConsumerWidget {
   }
 }
 
-/// Tappable summary row shown below a reply that itself has replies.
-/// Pushes a new [ThreadDetailPage] for the nested thread.
-class _NestedThreadSummaryRow extends ConsumerWidget {
-  final ThreadSummary summary;
-  final TimelineMessage replyMessage;
-  final List<TimelineMessage> allMessages;
-  final String channelId;
-  final String? currentPubkey;
-  final bool isMember;
-  final bool isArchived;
-
-  const _NestedThreadSummaryRow({
-    required this.summary,
-    required this.replyMessage,
-    required this.allMessages,
-    required this.channelId,
-    required this.currentPubkey,
-    required this.isMember,
-    required this.isArchived,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final userCache = ref.watch(userCacheProvider);
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => ThreadDetailPage(
-              threadHead: replyMessage,
-              allMessages: allMessages,
-              channelId: channelId,
-              currentPubkey: currentPubkey,
-              isMember: isMember,
-              isArchived: isArchived,
-            ),
-          ),
-        );
-      },
-      child: Padding(
-        key: ValueKey('nested-thread-summary-${replyMessage.id}'),
-        padding: const EdgeInsets.only(
-          left: messageAvatarSize + messageAvatarContentGap,
-          top: Grid.half,
-          bottom: Grid.xs,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Stacked participant avatars.
-            SizedBox(
-              width:
-                  32.0 +
-                  (summary.participantPubkeys.length - 1).clamp(0, 2) * 20.0,
-              height: 32,
-              child: Stack(
-                children: [
-                  for (var i = 0; i < summary.participantPubkeys.length; i++)
-                    Positioned(
-                      left: i * 20.0,
-                      child: SmallAvatar(
-                        pubkey: summary.participantPubkeys[i],
-                        userCache: userCache,
-                        size: 32,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: Grid.xxs),
-            Flexible(
-              child: Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text:
-                          '${summary.replyCount} ${summary.replyCount == 1 ? 'reply' : 'replies'}',
-                      style: replyPreviewTextStyle.copyWith(
-                        color: context.colors.primary,
-                      ),
-                    ),
-                    if (summary.lastReplyAt case final lastReplyAt?) ...[
-                      TextSpan(
-                        text: ' · ',
-                        style: replyPreviewTextStyle.copyWith(
-                          color: context.colors.onSurfaceVariant.withValues(
-                            alpha: 0.5,
-                          ),
-                        ),
-                      ),
-                      TextSpan(
-                        text:
-                            'last reply ${formatThreadSummaryLastReplyTime(lastReplyAt)}',
-                        style: replyPreviewTextStyle.copyWith(
-                          color: context.colors.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ThreadMessage extends ConsumerWidget {
+class _ThreadMessage extends HookConsumerWidget {
   final TimelineMessage message;
   final Map<String, String> channelNames;
   final String channelId;
@@ -796,14 +754,37 @@ class _ThreadMessage extends ConsumerWidget {
       );
     }
 
+    final reducedMotion = MediaQuery.disableAnimationsOf(context);
+    final highlightController = useAnimationController(
+      duration: _landingHighlightTransitionDuration,
+    );
+    final highlightProgress = useAnimation(highlightController);
+    useEffect(() {
+      if (reducedMotion) {
+        highlightController.value = isHighlighted ? 1 : 0;
+      } else {
+        unawaited(
+          highlightController.animateTo(
+            isHighlighted ? 1 : 0,
+            duration: _landingHighlightTransitionDuration,
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      }
+      return null;
+    }, [highlightController, isHighlighted, reducedMotion]);
+    final highlightColor = highlightProgress == 0
+        ? Colors.transparent
+        : context.colors.primary.withValues(
+            alpha: _landingHighlightOpacity * highlightProgress,
+          );
+
     return Padding(
       padding: EdgeInsets.only(top: showAuthor ? Grid.xs : 0),
       child: DecoratedBox(
         key: ValueKey('thread-message-${message.id}'),
         decoration: BoxDecoration(
-          color: isHighlighted
-              ? context.colors.primary.withValues(alpha: 0.12)
-              : Colors.transparent,
+          color: highlightColor,
           borderRadius: BorderRadius.circular(Radii.md),
         ),
         child: Material(
