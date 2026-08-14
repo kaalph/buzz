@@ -9,6 +9,10 @@ final class JumpToLatestGlassButtonFactory: NSObject, FlutterPlatformViewFactory
     super.init()
   }
 
+  func createArgsCodec() -> FlutterMessageCodec & NSObjectProtocol {
+    FlutterStandardMessageCodec.sharedInstance()
+  }
+
   func create(
     withFrame frame: CGRect,
     viewIdentifier viewId: Int64,
@@ -17,6 +21,7 @@ final class JumpToLatestGlassButtonFactory: NSObject, FlutterPlatformViewFactory
     JumpToLatestGlassButtonPlatformView(
       frame: frame,
       viewIdentifier: viewId,
+      arguments: args,
       messenger: messenger
     )
   }
@@ -43,6 +48,7 @@ final class JumpToLatestGlassButtonPlatformView: NSObject, FlutterPlatformView {
   init(
     frame: CGRect,
     viewIdentifier viewId: Int64,
+    arguments args: Any?,
     messenger: FlutterBinaryMessenger
   ) {
     containerView = UIView(frame: frame)
@@ -54,6 +60,7 @@ final class JumpToLatestGlassButtonPlatformView: NSObject, FlutterPlatformView {
 
     containerView.backgroundColor = .clear
     containerView.isOpaque = false
+    applyBrightness(from: args)
 
     var configuration: UIButton.Configuration
     if #available(iOS 26.0, *) {
@@ -81,6 +88,15 @@ final class JumpToLatestGlassButtonPlatformView: NSObject, FlutterPlatformView {
       for: .touchUpInside
     )
 
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "setBrightness" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      self?.applyBrightness(from: call.arguments)
+      result(nil)
+    }
+
     containerView.addSubview(button)
     NSLayoutConstraint.activate([
       button.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
@@ -92,5 +108,18 @@ final class JumpToLatestGlassButtonPlatformView: NSObject, FlutterPlatformView {
 
   func view() -> UIView {
     containerView
+  }
+
+  private func applyBrightness(from value: Any?) {
+    let brightness = (value as? [String: Any])?["brightness"] as? String
+      ?? value as? String
+    let interfaceStyle: UIUserInterfaceStyle = brightness == "dark" ? .dark : .light
+    containerView.overrideUserInterfaceStyle = interfaceStyle
+    button.overrideUserInterfaceStyle = interfaceStyle
+    button.setNeedsUpdateConfiguration()
+  }
+
+  deinit {
+    channel.setMethodCallHandler(nil)
   }
 }

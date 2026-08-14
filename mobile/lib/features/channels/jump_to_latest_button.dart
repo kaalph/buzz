@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
@@ -21,6 +22,7 @@ class JumpToLatestButton extends HookWidget {
   Widget build(BuildContext context) {
     final nativeChannel = useState<MethodChannel?>(null);
     final onPressedRef = useRef(onPressed)..value = onPressed;
+    final brightness = context.theme.brightness.name;
 
     useEffect(() {
       final channel = nativeChannel.value;
@@ -30,6 +32,14 @@ class JumpToLatestButton extends HookWidget {
       });
       return () => channel.setMethodCallHandler(null);
     }, [nativeChannel.value]);
+
+    useEffect(() {
+      final channel = nativeChannel.value;
+      if (channel != null) {
+        unawaited(channel.invokeMethod<void>('setBrightness', brightness));
+      }
+      return null;
+    }, [nativeChannel.value, brightness]);
 
     final borderColor = context.colors.onSurface.withValues(alpha: 0.08);
     final usesNativeIosGlass = defaultTargetPlatform == TargetPlatform.iOS;
@@ -47,6 +57,8 @@ class JumpToLatestButton extends HookWidget {
                   key: const ValueKey('channel-jump-to-latest-ios-glass'),
                   viewType: _iosViewType,
                   hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+                  creationParams: <String, Object>{'brightness': brightness},
+                  creationParamsCodec: const StandardMessageCodec(),
                   onPlatformViewCreated: (viewId) {
                     nativeChannel.value = MethodChannel(
                       '$_iosViewType/$viewId',

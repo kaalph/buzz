@@ -168,14 +168,16 @@ class _IosStickyDateGlass extends HookWidget {
   @override
   Widget build(BuildContext context) {
     final nativeChannel = useState<MethodChannel?>(null);
+    final brightness = context.theme.brightness.name;
 
     useEffect(() {
       final channel = nativeChannel.value;
       if (channel != null) {
         unawaited(channel.invokeMethod<void>('setLabel', label));
+        unawaited(channel.invokeMethod<void>('setBrightness', brightness));
       }
       return null;
-    }, [nativeChannel.value, label]);
+    }, [nativeChannel.value, label, brightness]);
 
     return Semantics(
       header: true,
@@ -189,7 +191,10 @@ class _IosStickyDateGlass extends HookWidget {
             key: const ValueKey('channel-sticky-date-header-ios-glass'),
             viewType: StickyDateHeader._iosViewType,
             hitTestBehavior: PlatformViewHitTestBehavior.transparent,
-            creationParams: <String, Object>{'label': label},
+            creationParams: <String, Object>{
+              'label': label,
+              'brightness': brightness,
+            },
             creationParamsCodec: const StandardMessageCodec(),
             onPlatformViewCreated: (viewId) {
               nativeChannel.value = MethodChannel(

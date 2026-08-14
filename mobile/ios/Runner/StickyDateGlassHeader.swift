@@ -69,6 +69,7 @@ final class StickyDateGlassHeaderPlatformView: NSObject, FlutterPlatformView {
     glassView.isUserInteractionEnabled = false
     glassView.clipsToBounds = true
     glassView.layer.cornerCurve = .continuous
+    applyBrightness(from: arguments?["brightness"])
 
     dateLabel.translatesAutoresizingMaskIntoConstraints = false
     dateLabel.text = text
@@ -98,17 +99,30 @@ final class StickyDateGlassHeaderPlatformView: NSObject, FlutterPlatformView {
     ])
 
     channel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "setLabel", let text = call.arguments as? String else {
+      switch call.method {
+      case "setLabel":
+        guard let text = call.arguments as? String else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        self?.dateLabel.text = text
+        result(nil)
+      case "setBrightness":
+        self?.applyBrightness(from: call.arguments)
+        result(nil)
+      default:
         result(FlutterMethodNotImplemented)
-        return
       }
-      self?.dateLabel.text = text
-      result(nil)
     }
   }
 
   func view() -> UIView {
     glassView
+  }
+
+  private func applyBrightness(from value: Any?) {
+    let interfaceStyle: UIUserInterfaceStyle = value as? String == "dark" ? .dark : .light
+    glassView.overrideUserInterfaceStyle = interfaceStyle
   }
 
   deinit {
