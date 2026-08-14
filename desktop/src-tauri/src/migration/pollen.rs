@@ -1,0 +1,380 @@
+//! Compatibility migration for the Bumble-to-Pollen built-in agent rename.
+
+use std::path::Path;
+
+use tauri::Manager;
+
+use super::persona_version_from_record;
+
+/// Rename the built-in research agent in persisted definitions and linked
+/// instances without overwriting user-customized fields.
+pub(super) fn migrate_pollen_agent_name(app: &tauri::AppHandle) {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let path = dir.join("agents/managed-agents.json");
+    if path.exists() {
+        migrate_pollen_agent_name_in_file(&path, &crate::util::now_iso());
+    }
+}
+
+fn migrate_pollen_agent_name_in_file(path: &Path, now: &str) {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(mut records) = serde_json::from_str::<Vec<serde_json::Value>>(&contents) else {
+        eprintln!(
+            "buzz-desktop: migrate-pollen-agent-name: invalid JSON in {}",
+            path.display()
+        );
+        return;
+    };
+
+    let mut version_updates = std::collections::HashMap::new();
+    let mut changed = false;
+
+    // Migrate the definition first so an in-sync linked instance can advance
+    // its source version instead of surfacing a false out-of-date warning.
+    for record in &mut records {
+        let is_definition = record
+            .get("pubkey")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(str::is_empty);
+        let Some(persona_id) = record
+            .get("slug")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if !is_definition {
+            continue;
+        }
+
+        let old_version = persona_version_from_record(record);
+        let Some(object) = record.as_object_mut() else {
+            continue;
+        };
+        let record_changed = if persona_id == crate::managed_agents::POLLEN_PERSONA_ID {
+            migrate_pollen_fields(object, true)
+        } else if persona_id == "builtin:fizz" {
+            remove_pollen_from_legacy_fizz_name_pool(object)
+        } else {
+            false
+        };
+        if !record_changed {
+            continue;
+        }
+
+        object.insert(
+            "updated_at".to_string(),
+            serde_json::Value::String(now.to_string()),
+        );
+        changed = true;
+        if let (Some(old_version), Some(new_version)) =
+            (old_version, persona_version_from_record(record))
+        {
+            version_updates.insert(persona_id, (old_version, new_version));
+        }
+    }
+
+    for record in &mut records {
+        let is_instance = record
+            .get("pubkey")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|pubkey| !pubkey.is_empty());
+        let Some(persona_id) = record
+            .get("persona_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let is_pollen_instance = persona_id == crate::managed_agents::POLLEN_PERSONA_ID;
+        let version_update = version_updates.get(&persona_id);
+        if !is_instance || (!is_pollen_instance && version_update.is_none()) {
+            continue;
+        }
+
+        let source_was_current = version_update.is_some_and(|(old, _)| {
+            record
+                .get("persona_source_version")
+                .and_then(serde_json::Value::as_str)
+                == Some(old.as_str())
+        });
+        let Some(object) = record.as_object_mut() else {
+            continue;
+        };
+        let mut record_changed = is_pollen_instance && migrate_pollen_fields(object, false);
+        if source_was_current {
+            if let Some((_, new_version)) = version_update {
+                object.insert(
+                    "persona_source_version".to_string(),
+                    serde_json::Value::String(new_version.clone()),
+                );
+                record_changed = true;
+            }
+        }
+        if record_changed {
+            object.insert(
+                "updated_at".to_string(),
+                serde_json::Value::String(now.to_string()),
+            );
+            changed = true;
+        }
+    }
+
+    if changed {
+        if let Ok(bytes) = serde_json::to_vec_pretty(&records) {
+            if let Err(error) = crate::managed_agents::atomic_write_json_restricted(path, &bytes) {
+                eprintln!("buzz-desktop: migrate-pollen-agent-name: {error}");
+            }
+        }
+    }
+}
+
+fn migrate_pollen_fields(
+    record: &mut serde_json::Map<String, serde_json::Value>,
+    is_definition: bool,
+) -> bool {
+    let mut changed = false;
+    for key in ["name", "display_name"] {
+        if record.get(key).and_then(serde_json::Value::as_str)
+            == Some(crate::managed_agents::POLLEN_LEGACY_DISPLAY_NAME)
+        {
+            record.insert(
+                key.to_string(),
+                serde_json::Value::String(crate::managed_agents::POLLEN_DISPLAY_NAME.to_string()),
+            );
+            changed = true;
+        }
+    }
+    if record
+        .get("system_prompt")
+        .and_then(serde_json::Value::as_str)
+        == Some(crate::managed_agents::POLLEN_LEGACY_SYSTEM_PROMPT)
+    {
+        record.insert(
+            "system_prompt".to_string(),
+            serde_json::Value::String(crate::managed_agents::POLLEN_SYSTEM_PROMPT.to_string()),
+        );
+        changed = true;
+    }
+    if is_definition
+        && record
+            .get("name_pool")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|names| {
+                names.len() == 1
+                    && names[0].as_str() == Some(crate::managed_agents::POLLEN_LEGACY_DISPLAY_NAME)
+            })
+    {
+        record.insert(
+            "name_pool".to_string(),
+            serde_json::json!([crate::managed_agents::POLLEN_DISPLAY_NAME]),
+        );
+        changed = true;
+    }
+    changed
+}
+
+fn remove_pollen_from_legacy_fizz_name_pool(
+    record: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    const LEGACY_FIZZ_NAME_POOL: &[&str] = &[
+        "Nectar", "Comet", "Bramble", "Clover", "Pollen", "Amber", "Daisy", "Mason", "Thistle",
+        "Waxwing", "Hive", "Meadow", "Juniper", "Aster", "Sage", "Willow", "Orchard", "Buzz",
+    ];
+    let Some(names) = record
+        .get("name_pool")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    if !names
+        .iter()
+        .map(|name| name.as_str())
+        .eq(LEGACY_FIZZ_NAME_POOL.iter().copied().map(Some))
+    {
+        return false;
+    }
+
+    let names_without_pollen = names
+        .iter()
+        .filter(|name| name.as_str() != Some(crate::managed_agents::POLLEN_DISPLAY_NAME))
+        .cloned()
+        .collect();
+    record.insert(
+        "name_pool".to_string(),
+        serde_json::Value::Array(names_without_pollen),
+    );
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migration::test_support::{read_agents_json, write_agents_json};
+
+    #[test]
+    fn pollen_name_migration_updates_seeded_fields_and_preserves_customizations() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agents/managed-agents.json");
+        let mut legacy_definition = crate::managed_agents::built_in_persona_definition(
+            crate::managed_agents::POLLEN_PERSONA_ID,
+            "before",
+        )
+        .unwrap();
+        legacy_definition.display_name =
+            crate::managed_agents::POLLEN_LEGACY_DISPLAY_NAME.to_string();
+        legacy_definition.system_prompt =
+            crate::managed_agents::POLLEN_LEGACY_SYSTEM_PROMPT.to_string();
+        legacy_definition.name_pool =
+            vec![crate::managed_agents::POLLEN_LEGACY_DISPLAY_NAME.to_string()];
+        let old_version = crate::managed_agents::persona_events::persona_content_hash(
+            &crate::managed_agents::persona_events::persona_event_content(&legacy_definition),
+        );
+        let mut current_definition = legacy_definition.clone();
+        current_definition.display_name = crate::managed_agents::POLLEN_DISPLAY_NAME.to_string();
+        current_definition.system_prompt = crate::managed_agents::POLLEN_SYSTEM_PROMPT.to_string();
+        current_definition.name_pool = vec![crate::managed_agents::POLLEN_DISPLAY_NAME.to_string()];
+        let new_version = crate::managed_agents::persona_events::persona_content_hash(
+            &crate::managed_agents::persona_events::persona_event_content(&current_definition),
+        );
+
+        let mut definition_record =
+            serde_json::to_value(legacy_definition.into_agent_record()).unwrap();
+        definition_record["future_definition_field"] = serde_json::json!("preserved");
+        let pristine_instance = serde_json::json!({
+            "pubkey": "pristine-pubkey",
+            "name": crate::managed_agents::POLLEN_LEGACY_DISPLAY_NAME,
+            "persona_id": crate::managed_agents::POLLEN_PERSONA_ID,
+            "system_prompt": crate::managed_agents::POLLEN_LEGACY_SYSTEM_PROMPT,
+            "persona_source_version": old_version,
+            "updated_at": "before",
+            "future_instance_field": "preserved"
+        });
+        let customized_instance = serde_json::json!({
+            "pubkey": "customized-pubkey",
+            "name": "My researcher",
+            "persona_id": crate::managed_agents::POLLEN_PERSONA_ID,
+            "system_prompt": "User-edited instructions",
+            "persona_source_version": "custom-version",
+            "updated_at": "before"
+        });
+        let unrelated = serde_json::json!({
+            "pubkey": "honey-pubkey",
+            "name": "Honey",
+            "persona_id": "builtin:honey",
+            "system_prompt": "You are Honey.",
+            "updated_at": "before"
+        });
+        write_agents_json(
+            dir.path(),
+            &serde_json::json!([
+                definition_record,
+                pristine_instance,
+                customized_instance,
+                unrelated
+            ]),
+        );
+
+        migrate_pollen_agent_name_in_file(&path, "after");
+
+        let records = read_agents_json(dir.path());
+        assert_eq!(
+            records[0]["slug"],
+            crate::managed_agents::POLLEN_PERSONA_ID,
+            "the persisted compatibility id must remain stable"
+        );
+        assert_eq!(
+            records[0]["name"],
+            crate::managed_agents::POLLEN_DISPLAY_NAME
+        );
+        assert_eq!(
+            records[0]["display_name"],
+            crate::managed_agents::POLLEN_DISPLAY_NAME
+        );
+        assert_eq!(
+            records[0]["system_prompt"],
+            crate::managed_agents::POLLEN_SYSTEM_PROMPT
+        );
+        assert_eq!(
+            records[0]["name_pool"],
+            serde_json::json!([crate::managed_agents::POLLEN_DISPLAY_NAME])
+        );
+        assert_eq!(records[0]["future_definition_field"], "preserved");
+        assert_eq!(records[0]["updated_at"], "after");
+
+        assert_eq!(
+            records[1]["name"],
+            crate::managed_agents::POLLEN_DISPLAY_NAME
+        );
+        assert_eq!(
+            records[1]["system_prompt"],
+            crate::managed_agents::POLLEN_SYSTEM_PROMPT
+        );
+        assert_eq!(records[1]["persona_source_version"], new_version);
+        assert_eq!(records[1]["future_instance_field"], "preserved");
+        assert_eq!(records[1]["updated_at"], "after");
+
+        assert_eq!(records[2]["name"], "My researcher");
+        assert_eq!(records[2]["system_prompt"], "User-edited instructions");
+        assert_eq!(records[2]["persona_source_version"], "custom-version");
+        assert_eq!(records[2]["updated_at"], "before");
+        assert_eq!(records[3], unrelated);
+
+        let once = std::fs::read(&path).unwrap();
+        migrate_pollen_agent_name_in_file(&path, "later");
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            once,
+            "migration is idempotent"
+        );
+    }
+
+    #[test]
+    fn pollen_name_migration_removes_the_new_name_from_the_legacy_fizz_pool() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agents/managed-agents.json");
+        let mut legacy_fizz =
+            crate::managed_agents::built_in_persona_definition("builtin:fizz", "before").unwrap();
+        legacy_fizz
+            .name_pool
+            .insert(4, crate::managed_agents::POLLEN_DISPLAY_NAME.to_string());
+        let old_version = crate::managed_agents::persona_events::persona_content_hash(
+            &crate::managed_agents::persona_events::persona_event_content(&legacy_fizz),
+        );
+        let mut current_fizz = legacy_fizz.clone();
+        current_fizz
+            .name_pool
+            .retain(|name| name != crate::managed_agents::POLLEN_DISPLAY_NAME);
+        let new_version = crate::managed_agents::persona_events::persona_content_hash(
+            &crate::managed_agents::persona_events::persona_event_content(&current_fizz),
+        );
+        write_agents_json(
+            dir.path(),
+            &serde_json::json!([
+                serde_json::to_value(legacy_fizz.into_agent_record()).unwrap(),
+                {
+                    "pubkey": "fizz-pubkey",
+                    "name": "Fizz",
+                    "persona_id": "builtin:fizz",
+                    "persona_source_version": old_version,
+                    "updated_at": "before"
+                }
+            ]),
+        );
+
+        migrate_pollen_agent_name_in_file(&path, "after");
+
+        let records = read_agents_json(dir.path());
+        assert_eq!(
+            records[0]["name_pool"],
+            serde_json::json!(current_fizz.name_pool)
+        );
+        assert_eq!(records[0]["updated_at"], "after");
+        assert_eq!(records[1]["persona_source_version"], new_version);
+        assert_eq!(records[1]["updated_at"], "after");
+    }
+}
