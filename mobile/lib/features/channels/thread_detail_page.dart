@@ -72,6 +72,10 @@ class ThreadDetailPage extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final composerDockHeight = useState(0.0);
+    useEffect(() {
+      final session = ref.read(relaySessionProvider.notifier);
+      return session.registerVisibleChannel(channelId);
+    }, [channelId]);
     final sendMessage = ref.read(sendMessageProvider);
     final queryRootId = threadHead.rootId ?? threadHead.id;
     final repliesState = ref.watch(
