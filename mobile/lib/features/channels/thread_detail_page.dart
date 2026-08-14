@@ -102,18 +102,18 @@ class ThreadDetailPage extends HookConsumerWidget {
               threadHead,
             ...fetchedReplies,
           ];
-    final initialMessageIsPresent =
-        initialMessageId != null &&
-        allMsgs.any((message) => message.id == initialMessageId);
     final routeAnimation = ModalRoute.of(context)?.animation;
     final reducedLandingHighlightMotion = MediaQuery.disableAnimationsOf(
       context,
     );
     final highlightedMessageId = useState<String?>(null);
+    final initialTargetReadyForHighlight = useState(false);
     useEffect(
       () {
         final messageId = initialMessageId;
-        if (messageId == null || !initialMessageIsPresent) return null;
+        if (messageId == null || !initialTargetReadyForHighlight.value) {
+          return null;
+        }
         var disposed = false;
         Timer? revealTimer;
         Timer? dismissTimer;
@@ -159,7 +159,7 @@ class ThreadDetailPage extends HookConsumerWidget {
       },
       [
         initialMessageId,
-        initialMessageIsPresent,
+        initialTargetReadyForHighlight.value,
         reducedLandingHighlightMotion,
         routeAnimation,
       ],
@@ -178,6 +178,7 @@ class ThreadDetailPage extends HookConsumerWidget {
     final listViewport = useMemoized(LaidOutViewport.new);
     useEffect(() => listViewport.dispose, [listViewport]);
     final didJumpToInitialMessage = useRef(false);
+    final initialHighlightTargetIndex = useState<int?>(null);
     final followsThreadTail = useRef(false);
     final userOptedOutOfTailFollow = useRef(false);
     final tailIntent = useMemoized(_ThreadTailIntent.new);
@@ -236,10 +237,42 @@ class ThreadDetailPage extends HookConsumerWidget {
           followsThreadTail.value = false;
           pendingTailAlignment.value = null;
           itemScrollController.jumpTo(index: targetIndex, alignment: 0.35);
+          initialHighlightTargetIndex.value = targetIndex;
         },
       );
       return null;
     }, [initialMessageId, fetchedReplies, replies.length]);
+
+    useEffect(
+      () {
+        final targetIndex = initialHighlightTargetIndex.value;
+        if (targetIndex == null || initialTargetReadyForHighlight.value) {
+          return null;
+        }
+        var completionScheduled = false;
+        void markReadyAfterTargetLayout() {
+          if (completionScheduled ||
+              !itemPositionsListener.itemPositions.value.any(
+                (position) => position.index == targetIndex,
+              )) {
+            return;
+          }
+          completionScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) initialTargetReadyForHighlight.value = true;
+          });
+        }
+
+        itemPositionsListener.itemPositions.addListener(
+          markReadyAfterTargetLayout,
+        );
+        markReadyAfterTargetLayout();
+        return () => itemPositionsListener.itemPositions.removeListener(
+          markReadyAfterTargetLayout,
+        );
+      },
+      [initialHighlightTargetIndex.value, initialTargetReadyForHighlight.value],
+    );
 
     final hasFetchedReplies = fetchedReplies != null;
     final initialTailSettle = useMemoized(InitialThreadTailSettle.new);
@@ -945,33 +978,6 @@ class _ThreadMessage extends HookConsumerWidget {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Avatar extends StatelessWidget {
-  final UserProfile? profile;
-  final String pubkey;
-
-  const _Avatar({required this.profile, required this.pubkey});
-
-  @override
-  Widget build(BuildContext context) {
-    final initial =
-        profile?.initial ?? (pubkey.isNotEmpty ? pubkey[0].toUpperCase() : '?');
-    final avatarUrl = profile?.avatarUrl;
-
-    return AvatarImage(
-      imageUrl: avatarUrl,
-      radius: messageAvatarSize / 2,
-      backgroundColor: context.colors.primaryContainer,
-      fallback: Text(
-        initial,
-        style: context.textTheme.labelMedium?.copyWith(
-          color: context.colors.onPrimaryContainer,
-          fontWeight: FontWeight.w600,
         ),
       ),
     );
