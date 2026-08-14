@@ -803,7 +803,7 @@ class _MessageList extends HookConsumerWidget {
                     : const Duration(milliseconds: 180),
                 reverseDuration: MediaQuery.disableAnimationsOf(context)
                     ? Duration.zero
-                    : const Duration(milliseconds: 160),
+                    : const Duration(milliseconds: 320),
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 transitionBuilder: (child, animation) => FadeTransition(

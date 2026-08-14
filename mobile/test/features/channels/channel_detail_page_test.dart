@@ -2538,7 +2538,7 @@ void main() {
         find.byKey(const ValueKey('channel-jump-to-latest-switcher')),
       );
       expect(latestSwitcher.duration, const Duration(milliseconds: 180));
-      expect(latestSwitcher.reverseDuration, const Duration(milliseconds: 160));
+      expect(latestSwitcher.reverseDuration, const Duration(milliseconds: 320));
       expect(latestSwitcher.switchInCurve, Curves.easeOutCubic);
       expect(latestSwitcher.switchOutCurve, Curves.easeInCubic);
       final latestScaleTransition = tester.widget<ScaleTransition>(
@@ -2615,6 +2615,9 @@ void main() {
         }
       }
       expect(exitingScaleTransition().scale.status, AnimationStatus.reverse);
+      await tester.pump(const Duration(milliseconds: 120));
+
+      expect(exitingScaleTransition().scale.value, greaterThan(0.1));
       await tester.pump(const Duration(milliseconds: 120));
 
       final collapsedScaleTransition = exitingScaleTransition();
