@@ -2395,6 +2395,78 @@ void main() {
       },
     );
 
+    testWidgets(
+      'recomputes latest navigation when a detached composer resizes',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final tallMessage = List.generate(
+          40,
+          (index) => 'Newest message line $index',
+        ).join('\n');
+
+        await tester.pumpWidget(
+          _buildTestable(
+            messages: [
+              _textMsg(
+                id: 'tall-newest',
+                pubkey: 'alice',
+                content: tallMessage,
+                createdAt: 1000,
+              ),
+            ],
+            users: const {
+              'alice': UserProfile(pubkey: 'alice', displayName: 'Alice'),
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Message #general'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byType(TextField),
+          List.generate(5, (index) => 'Draft line $index').join('\n'),
+        );
+        await tester.pumpAndSettle();
+
+        final messageList = find.byKey(const ValueKey('channel-message-list'));
+        final composerDock = find.byKey(
+          const ValueKey('channel-composer-dock'),
+        );
+        final expandedDockHeight = tester.getSize(composerDock).height;
+        final viewportHeight = tester.getSize(messageList).height;
+        final appBarHeight = tester.getSize(find.byType(FrostedAppBar)).height;
+        final detachedDistance =
+            viewportHeight - appBarHeight - expandedDockHeight + Grid.xl;
+
+        await tester.drag(messageList, Offset(0, detachedDistance));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('channel-jump-to-latest')),
+          findsOneWidget,
+        );
+
+        await tester.enterText(find.byType(TextField), 'Short draft');
+        await tester.pumpAndSettle();
+
+        final compactDockHeight = tester.getSize(composerDock).height;
+        expect(compactDockHeight, lessThan(expandedDockHeight));
+        expect(
+          detachedDistance,
+          lessThan(viewportHeight - appBarHeight - compactDockHeight),
+        );
+        expect(
+          find.byKey(const ValueKey('channel-jump-to-latest')),
+          findsNothing,
+        );
+      },
+    );
+
     testWidgets('ignores scroll notifications from nested message content', (
       tester,
     ) async {
