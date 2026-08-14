@@ -86,6 +86,45 @@ test("formatAgentModelLabel — null or empty returns Auto", () => {
   assert.equal(formatAgentModelLabel("   "), "Auto");
 });
 
+import { resolveModelLabel } from "./formatAgentModelLabel.ts";
+
+test("resolveModelLabel — echoed id name falls through to the registry (real discovery shape)", () => {
+  // buzz-agent's Databricks discovery emits {id, name: id}; the echoed name
+  // carries no display info, so the registry tier must curate the label.
+  assert.equal(
+    resolveModelLabel(
+      "databricks-gpt-5-5",
+      "databricks-gpt-5-5",
+      "databricks_v2",
+    ),
+    "GPT-5.5",
+  );
+});
+
+test("resolveModelLabel — echoed id name for an unknown id stays raw", () => {
+  assert.equal(
+    resolveModelLabel(
+      "databricks-team-2025-01",
+      "databricks-team-2025-01",
+      "databricks_v2",
+    ),
+    "databricks-team-2025-01",
+  );
+});
+
+test("resolveModelLabel — a discovered name distinct from the id still wins tier 1", () => {
+  // The "(default catalog)" suffixed name (and any genuinely distinct name) is
+  // authoritative and must not be discarded by the echo-equality check.
+  assert.equal(
+    resolveModelLabel(
+      "databricks-gpt-5-5",
+      "GPT-5.5 (default catalog)",
+      "databricks_v2",
+    ),
+    "GPT-5.5 (default catalog)",
+  );
+});
+
 test("resolveAgentCardModelLabel — known Databricks defaultModel with databricks_v2 provider renders curated name in default label", () => {
   const label = resolveAgentCardModelLabel({
     agent: undefined,

@@ -12,7 +12,12 @@ export { canonicalizeProvider };
  * Resolves a human-readable label for a model, following a three-tier
  * precedence:
  *
- *   1. Non-blank discovered/API name (e.g. from `AgentModelInfo.name`).
+ *   1. Non-blank discovered/API name (e.g. from `AgentModelInfo.name`) that is
+ *      genuinely distinct from the id. A discovered name that merely echoes the
+ *      trimmed id carries no display information, so it is treated as absent and
+ *      falls through to the registry tier — this covers buzz-agent's Databricks
+ *      discovery contract (`{id, name: id}`) and any harness/version skew that
+ *      echoes the id as the name.
  *   2. Registry lookup by id:
  *      - `provider` supplied → provider-qualified exact record only. On a miss
  *        the raw id is returned; the unscoped `DATABRICKS_MODEL_NAMES` map is
@@ -35,8 +40,10 @@ export function resolveModelLabel(
   provider?: string | null | undefined,
 ): string {
   const trimmedName = discoveredName?.trim();
-  if (trimmedName) return trimmedName;
   const trimmedId = id.trim();
+  // A discovered name distinct from the id is authoritative (tier 1). A name
+  // that merely echoes the id is treated as absent so the registry tier runs.
+  if (trimmedName && trimmedName !== trimmedId) return trimmedName;
   if (!trimmedId) return "";
   if (provider?.trim()) {
     // Provider-qualified exact-record tier (provider-scoped, no unscoped fallback).

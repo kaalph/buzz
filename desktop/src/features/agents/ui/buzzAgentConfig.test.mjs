@@ -450,8 +450,9 @@ test("databricks_v2 with databricks-gpt-5.1 strips prefix and routes to OpenAI g
 });
 
 test("databricks_v2 with concrete non-claude non-gpt model excludes max (MLflow clamps it)", () => {
-  // llama-3 routes through MlflowChatCompletions → normalize_effort_for_openai_route
-  // → max is clamped to xhigh. Show all-except-max so the UI is honest.
+  // llama-3 falls to the databricks_v2 concrete-unknown fallback, whose
+  // OpenaiClampMaxToXhigh normalization policy clamps max→xhigh
+  // (normalize_effort_for_databricks_v2). Show all-except-max so the UI is honest.
   const { validValues, defaultValue } = getProviderEffortConfig(
     "databricks_v2",
     "llama-3",

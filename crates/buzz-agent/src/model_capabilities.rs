@@ -374,6 +374,25 @@ pub fn databricks_v2_known_models() -> &'static [String] {
     &manifest().databricks_v2_known_models
 }
 
+/// Curated display label for a Databricks endpoint id, or `None` when no exact
+/// record covers it. Read-only accessor over the same `databricks_v2` exact
+/// records `resolve()` consults, with the same case-insensitive id match; used
+/// by discovery to curate `ModelEntry.name` (the Databricks API returns no
+/// display name of its own). Scoped to `databricks_v2` records only, so it can
+/// never surface a curated label for a non-Databricks provider.
+pub fn databricks_registry_label(raw_model_id: &str) -> Option<&'static str> {
+    if raw_model_id.trim().is_empty() {
+        return None;
+    }
+    manifest()
+        .exact_records
+        .iter()
+        .find(|rec| {
+            rec.provider == "databricks_v2" && rec.raw_model_id.eq_ignore_ascii_case(raw_model_id)
+        })
+        .map(|rec| rec.registry_label.as_str())
+}
+
 /// Semantic invariants that strict typed parsing cannot express. Structural
 /// checks (required fields, enum domains, both fallback states) are already
 /// guaranteed by `serde` + `deny_unknown_fields`; this owns the rest.
@@ -860,5 +879,21 @@ mod tests {
         let known = databricks_v2_known_models();
         assert!(known.iter().any(|m| m == "databricks-gpt-5-5"));
         assert!(known.iter().any(|m| m == "databricks-claude-opus-4-7"));
+    }
+
+    #[test]
+    fn test_databricks_registry_label_lookup() {
+        // Known id → curated label; case-insensitive on the id, matching resolve().
+        assert_eq!(
+            databricks_registry_label("databricks-gpt-5-5"),
+            Some("GPT-5.5")
+        );
+        assert_eq!(
+            databricks_registry_label("DATABRICKS-GPT-5-5"),
+            Some("GPT-5.5")
+        );
+        // Unknown id and blank input → no label.
+        assert_eq!(databricks_registry_label("custom-unlisted-endpoint"), None);
+        assert_eq!(databricks_registry_label("   "), None);
     }
 }
