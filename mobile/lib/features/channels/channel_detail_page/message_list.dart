@@ -48,6 +48,7 @@ class _MessageList extends HookConsumerWidget {
     final isJumpToLatestVisible = useState(false);
     final hasUserScrolled = useState(false);
     final distanceFromLatest = useRef(0.0);
+    final hasUnseenLatestEntry = useRef(false);
     final followsLatest = useRef(
       initialMessageId == null && initialThreadRootId == null,
     );
@@ -313,6 +314,7 @@ class _MessageList extends HookConsumerWidget {
       if (!itemScrollController.isAttached || isAutoScrolling.value) return;
       followsLatest.value = true;
       hasUserScrolled.value = false;
+      hasUnseenLatestEntry.value = false;
       isAutoScrolling.value = true;
       try {
         await itemScrollController.scrollTo(
@@ -354,13 +356,13 @@ class _MessageList extends HookConsumerWidget {
       }
     }
 
-    bool latestIsAtBoundary() {
+    bool latestIsAtBoundary([Iterable<ItemPosition>? positions]) {
       // In this reversed list, item 0's leading edge is the visible bottom
       // boundary above the composer. Being merely visible is not enough: a
       // user who has pulled a tall newest row away from that boundary must not
       // snap back on live updates.
       final boundary = latestAlignment();
-      return itemPositionsListener.itemPositions.value.any(
+      return (positions ?? itemPositionsListener.itemPositions.value).any(
         (position) =>
             position.index == 0 &&
             (position.itemLeadingEdge - boundary).abs() < 0.01,
@@ -388,8 +390,10 @@ class _MessageList extends HookConsumerWidget {
             composerBottomInset,
       );
       final shouldShow =
-          !latestIsAtBoundary() &&
-          (!latestIsVisible || distanceFromLatest.value > visiblePageHeight);
+          !latestIsAtBoundary(positions) &&
+          (hasUnseenLatestEntry.value ||
+              !latestIsVisible ||
+              distanceFromLatest.value > visiblePageHeight);
       if (isJumpToLatestVisible.value != shouldShow) {
         isJumpToLatestVisible.value = shouldShow;
       }
@@ -432,6 +436,7 @@ class _MessageList extends HookConsumerWidget {
             isUnreadNavigationDismissed.value = true;
           }
           if (nextIsAtLatest) {
+            hasUnseenLatestEntry.value = false;
             if (!isAtLatest.value) isAtLatest.value = true;
             if (isJumpToLatestVisible.value) {
               isJumpToLatestVisible.value = false;
@@ -552,12 +557,25 @@ class _MessageList extends HookConsumerWidget {
       previousLatestEntryId.value = latestEntryId;
       if (previous == null ||
           latestEntryId == null ||
-          previous == latestEntryId ||
-          !isAtLatest.value) {
+          previous == latestEntryId) {
         return null;
       }
+      if (!followsLatest.value || hasUserScrolled.value) {
+        hasUnseenLatestEntry.value = true;
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (context.mounted) scrollToLatest();
+        if (!context.mounted) return;
+        if (followsLatest.value && !hasUserScrolled.value) {
+          scrollToLatest();
+          return;
+        }
+        final positions = itemPositionsListener.itemPositions.value;
+        if (positions.isNotEmpty) {
+          if (latestIsAtBoundary(positions)) {
+            hasUnseenLatestEntry.value = false;
+          }
+          updateJumpToLatestVisibility(positions);
+        }
       });
       return null;
     }, [latestEntryId]);

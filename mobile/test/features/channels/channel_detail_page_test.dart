@@ -2823,7 +2823,7 @@ void main() {
         await tester.pumpAndSettle();
 
         final messageList = find.byKey(const ValueKey('channel-message-list'));
-        await tester.drag(messageList, const Offset(0, 120));
+        await tester.drag(messageList, const Offset(0, 60));
         await tester.pumpAndSettle();
 
         expect(findRichText('Newest message line 0'), findsOneWidget);
@@ -2843,13 +2843,22 @@ void main() {
         ]);
         await tester.pumpAndSettle();
 
-        // Cache-extent mounting varies by platform, so assert the reversed
-        // list's semantic boundary rather than whether item 0 is mounted.
+        // Keep the inserted row visible so this exercises the settled
+        // reversed-list boundary instead of relying on offscreen detection.
         final positions = tester
             .widget<ScrollablePositionedList>(messageList)
             .itemPositionsNotifier!
             .itemPositions
             .value;
+        expect(
+          positions.any(
+            (position) =>
+                position.index == 0 &&
+                position.itemLeadingEdge < 1 &&
+                position.itemTrailingEdge > 0,
+          ),
+          isTrue,
+        );
         expect(
           positions.any(
             (position) =>
