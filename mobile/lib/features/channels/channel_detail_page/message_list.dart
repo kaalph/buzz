@@ -35,6 +35,7 @@ class _MessageList extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final appView = View.of(context);
     final displayEntries = groupMembershipTimelineEntries(entries);
     final itemScrollController = useMemoized(ItemScrollController.new);
     final itemPositionsListener = useMemoized(ItemPositionsListener.create);
@@ -45,14 +46,20 @@ class _MessageList extends HookConsumerWidget {
     final timelineViewportHeight = useRef(MediaQuery.sizeOf(context).height);
     final isLoadingOlder = useState(false);
     final isAtLatest = useState(true);
+    final settledImeBottomInset = useState(
+      usesFixedAndroidImeViewport
+          ? appView.viewInsets.bottom / appView.devicePixelRatio
+          : 0.0,
+    );
     final isJumpToLatestVisible = useState(false);
     final hasUserScrolled = useState(false);
     final distanceFromLatest = useRef(0.0);
     final hasUnseenLatestEntry = useRef(false);
-    final followsLatest = useRef(
+    final followsLatest = useState(
       initialMessageId == null && initialThreadRootId == null,
     );
     final isAutoScrolling = useRef(false);
+    final latestNavigationRequest = useState(0);
     final latestRealignmentQueued = useRef(false);
     final latestEntryId = entries.isEmpty ? null : entries.last.message.id;
     final previousLatestEntryId = useRef<String?>(null);
@@ -69,6 +76,15 @@ class _MessageList extends HookConsumerWidget {
     final dayTimestampByReversedIndex = <int, int>{};
     final dayStartByReversedIndex = <int, int>{};
     final dayHeaderTimestampByReversedIndex = <int, int>{};
+    final settledImeLift = usesFixedAndroidImeViewport
+        ? (settledImeBottomInset.value -
+                  MediaQuery.viewPaddingOf(context).bottom)
+              .clamp(0.0, double.infinity)
+              .toDouble()
+        : settledImeBottomInset.value;
+    final timelineBottomInset =
+        composerBottomInset + (followsLatest.value ? settledImeLift : 0);
+    final navigationBottomInset = composerBottomInset + settledImeLift;
     var currentDayTimestamp =
         displayEntries.firstOrNull?.first.message.createdAt;
     var currentDayStartIndex = displayEntries.isEmpty
@@ -198,7 +214,7 @@ class _MessageList extends HookConsumerWidget {
     double latestAlignment() {
       final viewportHeight = timelineViewportHeight.value;
       return viewportHeight > 0
-          ? (composerBottomInset / viewportHeight).clamp(0.0, 1.0).toDouble()
+          ? (timelineBottomInset / viewportHeight).clamp(0.0, 1.0).toDouble()
           : 0.0;
     }
 
@@ -310,12 +326,11 @@ class _MessageList extends HookConsumerWidget {
       );
     }
 
-    Future<void> scrollToLatest() async {
-      if (!itemScrollController.isAttached || isAutoScrolling.value) return;
-      followsLatest.value = true;
-      hasUserScrolled.value = false;
-      hasUnseenLatestEntry.value = false;
-      isAutoScrolling.value = true;
+    Future<void> performLatestNavigation() async {
+      if (!context.mounted || !itemScrollController.isAttached) {
+        isAutoScrolling.value = false;
+        return;
+      }
       try {
         await itemScrollController.scrollTo(
           index: 0,
@@ -331,6 +346,25 @@ class _MessageList extends HookConsumerWidget {
         isAutoScrolling.value = false;
       }
     }
+
+    void scrollToLatest() {
+      if (!itemScrollController.isAttached || isAutoScrolling.value) return;
+      isAutoScrolling.value = true;
+      followsLatest.value = true;
+      hasUserScrolled.value = false;
+      hasUnseenLatestEntry.value = false;
+      latestNavigationRequest.value += 1;
+    }
+
+    useEffect(() {
+      if (latestNavigationRequest.value == 0) return null;
+      var cancelled = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (cancelled) return;
+        unawaited(performLatestNavigation());
+      });
+      return () => cancelled = true;
+    }, [latestNavigationRequest.value]);
 
     Future<void> scrollToOldestUnread() async {
       final targetIndex = reversedIndexOf(oldestUnreadMessageId.value);
@@ -356,13 +390,13 @@ class _MessageList extends HookConsumerWidget {
       }
     }
 
-    bool latestIsAtBoundary([Iterable<ItemPosition>? positions]) {
+    bool latestIsAtBoundary() {
       // In this reversed list, item 0's leading edge is the visible bottom
       // boundary above the composer. Being merely visible is not enough: a
       // user who has pulled a tall newest row away from that boundary must not
       // snap back on live updates.
       final boundary = latestAlignment();
-      return (positions ?? itemPositionsListener.itemPositions.value).any(
+      return itemPositionsListener.itemPositions.value.any(
         (position) =>
             position.index == 0 &&
             (position.itemLeadingEdge - boundary).abs() < 0.01,
@@ -390,7 +424,7 @@ class _MessageList extends HookConsumerWidget {
             composerBottomInset,
       );
       final shouldShow =
-          !latestIsAtBoundary(positions) &&
+          !latestIsAtBoundary() &&
           (hasUnseenLatestEntry.value ||
               !latestIsVisible ||
               distanceFromLatest.value > visiblePageHeight);
@@ -401,6 +435,7 @@ class _MessageList extends HookConsumerWidget {
 
     void realignLatestAfterLayoutChange() {
       if (latestRealignmentQueued.value ||
+          isAutoScrolling.value ||
           !followsLatest.value ||
           hasUserScrolled.value) {
         return;
@@ -410,6 +445,7 @@ class _MessageList extends HookConsumerWidget {
         latestRealignmentQueued.value = false;
         if (!context.mounted ||
             !itemScrollController.isAttached ||
+            isAutoScrolling.value ||
             !followsLatest.value ||
             hasUserScrolled.value ||
             latestIsAtBoundary()) {
@@ -480,7 +516,6 @@ class _MessageList extends HookConsumerWidget {
         entries.length,
         itemPositionsListener,
         appBarTitleContentHeight,
-        composerBottomInset,
       ],
     );
 
@@ -496,15 +531,28 @@ class _MessageList extends HookConsumerWidget {
     useEffect(() {
       realignLatestAfterLayoutChange();
       return null;
-    }, [composerBottomInset]);
+    }, [timelineBottomInset]);
 
     useEffect(() {
-      final observer = _ChannelLatestMetricsObserver(
-        onMetricsChanged: realignLatestAfterLayoutChange,
+      final observer = ImeMetricsSettleObserver(
+        onMetricsSettled: () {
+          if (!usesFixedAndroidImeViewport) {
+            realignLatestAfterLayoutChange();
+            return;
+          }
+          final nextInset =
+              appView.viewInsets.bottom / appView.devicePixelRatio;
+          if ((settledImeBottomInset.value - nextInset).abs() >= 0.5) {
+            settledImeBottomInset.value = nextInset;
+          }
+        },
       );
       WidgetsBinding.instance.addObserver(observer);
-      return () => WidgetsBinding.instance.removeObserver(observer);
-    }, [itemScrollController]);
+      return () {
+        WidgetsBinding.instance.removeObserver(observer);
+        observer.dispose();
+      };
+    }, [appView, itemScrollController]);
 
     useEffect(() {
       if (initialThreadRootId == null || didOpenInitialThread.value) {
@@ -571,7 +619,7 @@ class _MessageList extends HookConsumerWidget {
         }
         final positions = itemPositionsListener.itemPositions.value;
         if (positions.isNotEmpty) {
-          if (latestIsAtBoundary(positions)) {
+          if (latestIsAtBoundary()) {
             hasUnseenLatestEntry.value = false;
           }
           updateJumpToLatestVisibility(positions);
@@ -622,16 +670,19 @@ class _MessageList extends HookConsumerWidget {
       children: [
         NotificationListener<Notification>(
           onNotification: (notification) {
+            if (notification is ScrollMetricsNotification &&
+                notification.depth != 0) {
+              return false;
+            }
+            if (notification is ScrollNotification && notification.depth != 0) {
+              return false;
+            }
             if (notification is ScrollMetricsNotification) {
-              if (notification.depth != 0) return false;
               timelineViewportHeight.value =
                   notification.metrics.viewportDimension;
               return false;
             }
-            if (notification is! ScrollNotification ||
-                notification.depth != 0) {
-              return false;
-            }
+            if (notification is! ScrollNotification) return false;
             timelineViewportHeight.value =
                 notification.metrics.viewportDimension;
             distanceFromLatest.value = max(
@@ -674,7 +725,7 @@ class _MessageList extends HookConsumerWidget {
                   context,
                   titleContentHeight: appBarTitleContentHeight,
                 ),
-                bottom: composerBottomInset,
+                bottom: timelineBottomInset,
               ),
               itemCount: displayEntries.length + (isLoadingOlder.value ? 1 : 0),
               itemBuilder: (context, index) {
@@ -813,7 +864,7 @@ class _MessageList extends HookConsumerWidget {
           Positioned(
             left: 0,
             right: 0,
-            bottom: composerBottomInset + Grid.xs,
+            bottom: navigationBottomInset + Grid.xs,
             child: Center(
               child: AnimatedSwitcher(
                 key: const ValueKey('channel-jump-to-latest-switcher'),
@@ -822,7 +873,7 @@ class _MessageList extends HookConsumerWidget {
                     : const Duration(milliseconds: 180),
                 reverseDuration: MediaQuery.disableAnimationsOf(context)
                     ? Duration.zero
-                    : const Duration(milliseconds: 320),
+                    : const Duration(milliseconds: 160),
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 transitionBuilder: (child, animation) => FadeTransition(
@@ -847,15 +898,6 @@ class _MessageList extends HookConsumerWidget {
       ],
     );
   }
-}
-
-class _ChannelLatestMetricsObserver with WidgetsBindingObserver {
-  final VoidCallback onMetricsChanged;
-
-  _ChannelLatestMetricsObserver({required this.onMetricsChanged});
-
-  @override
-  void didChangeMetrics() => onMetricsChanged();
 }
 
 class _JumpToLatestScaleAnimation extends Animation<double>
