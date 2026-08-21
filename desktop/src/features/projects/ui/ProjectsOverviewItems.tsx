@@ -82,7 +82,10 @@ export function ProjectsOverviewProjectItems({
   );
   // Mount cards progressively; a one-shot mount of every card blocked the
   // main thread on tab entry.
-  const mountedCount = useIncrementalMount(visibleProjects.length);
+  // Cards cost ~5ms each to mount (activity bar, people stack, menus); the
+  // viewport fits under a dozen, so a small first window keeps the tab-entry
+  // commit short and the rest streams in within a few frames.
+  const mountedCount = useIncrementalMount(visibleProjects.length, 12, 36);
   const mountedProjects = React.useMemo(
     () => visibleProjects.slice(0, mountedCount),
     [mountedCount, visibleProjects],
@@ -192,7 +195,8 @@ export function ProjectsOverviewRepositoryItems({
     [visibleRepositories],
   );
   // Mount cards progressively (see ProjectsOverviewProjectItems).
-  const mountedCount = useIncrementalMount(visibleRepositories.length);
+  // Small first window: see ProjectsOverviewProjectItems.
+  const mountedCount = useIncrementalMount(visibleRepositories.length, 12, 36);
   const mountedRepositories = React.useMemo(
     () => visibleRepositories.slice(0, mountedCount),
     [mountedCount, visibleRepositories],
