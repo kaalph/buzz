@@ -112,6 +112,7 @@ import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { Button } from "@/shared/ui/button";
 import { useOptionalSidebar } from "@/shared/ui/sidebar";
 import { useProjectsOverviewAgentContext } from "./useProjectsOverviewAgentContext";
+import { EMPTY_ITEMS, useContextWorkItems } from "./projectsViewWorkItems";
 
 const MANY_PROJECTS_THRESHOLD = 12;
 const PROJECTS_CONTEXT_POD_MIN_VIEWPORT_PX = 1024;
@@ -582,7 +583,12 @@ export function ProjectsView() {
         );
       }
     },
-    [deleteProjectMutation],
+    // Stable mutateAsync, not the per-render mutation object (breaks memos).
+    [deleteProjectMutation.mutateAsync],
+  );
+
+  const { contextIssues, contextPullRequests } = useContextWorkItems(
+    projectsWorkItemsQuery.data,
   );
 
   if (projectsQuery.isLoading) {
@@ -675,14 +681,16 @@ export function ProjectsView() {
         isLoading={
           repoSnapshotsQuery.isLoading || projectsWorkItemsQuery.isLoading
         }
-        issues={projectsWorkItemsQuery.data?.issues.items ?? []}
+        issues={projectsWorkItemsQuery.data?.issues.items ?? EMPTY_ITEMS}
         onOpenCommit={handleOpenCommit}
         onOpenIssue={handleOpenIssue}
         onOpenProject={handleOpenProject}
         onOpenPullRequest={handleOpenPullRequest}
         profiles={profiles}
         projects={projects}
-        pullRequests={projectsWorkItemsQuery.data?.pullRequests.items ?? []}
+        pullRequests={
+          projectsWorkItemsQuery.data?.pullRequests.items ?? EMPTY_ITEMS
+        }
         snapshots={repoSnapshotsQuery.data?.snapshots}
       />
     </>
@@ -690,8 +698,7 @@ export function ProjectsView() {
 
   const contextPanelProps = {
     filter,
-    issues:
-      projectsWorkItemsQuery.data?.issues.items.map(({ issue }) => issue) ?? [],
+    issues: contextIssues,
     onChatWithAgent: (items: ProjectSelectionItem[]) =>
       setSelectionAgentContext(buildProjectSelectionAgentContext(items)),
     onCreateIssue: () => setCreateIssueOpen(true),
@@ -699,10 +706,7 @@ export function ProjectsView() {
     onCreatePullRequest: () => setCreatePullRequestOpen(true),
     profiles,
     projects,
-    pullRequests:
-      projectsWorkItemsQuery.data?.pullRequests.items.map(
-        ({ pullRequest }) => pullRequest,
-      ) ?? [],
+    pullRequests: contextPullRequests,
     summaries: activitySummariesQuery.data,
   };
   const overviewDetached = overviewPanelOpen && !isNarrowProjectsLayout;
