@@ -33,6 +33,7 @@ import {
   RepositoryGridCard,
   RepositoryListRow,
 } from "@/features/projects/ui/RepositoryCards";
+import { useIncrementalMount } from "@/shared/hooks/useIncrementalMount";
 import { cn } from "@/shared/lib/cn";
 
 export function ProjectsOverviewProjectItems({
@@ -79,6 +80,13 @@ export function ProjectsOverviewProjectItems({
       ),
     [visibleProjects],
   );
+  // Mount cards progressively; a one-shot mount of every card blocked the
+  // main thread on tab entry.
+  const mountedCount = useIncrementalMount(visibleProjects.length);
+  const mountedProjects = React.useMemo(
+    () => visibleProjects.slice(0, mountedCount),
+    [mountedCount, visibleProjects],
+  );
   if (visibleProjects.length === 0) {
     return <EmptyFilteredState />;
   }
@@ -90,7 +98,7 @@ export function ProjectsOverviewProjectItems({
           filter !== "all" && "xl:grid-cols-3",
         )}
       >
-        {visibleProjects.map((project) => {
+        {mountedProjects.map((project) => {
           const summary = summaries?.[project.id];
           return (
             <div
@@ -183,13 +191,19 @@ export function ProjectsOverviewRepositoryItems({
       ),
     [visibleRepositories],
   );
+  // Mount cards progressively (see ProjectsOverviewProjectItems).
+  const mountedCount = useIncrementalMount(visibleRepositories.length);
+  const mountedRepositories = React.useMemo(
+    () => visibleRepositories.slice(0, mountedCount),
+    [mountedCount, visibleRepositories],
+  );
   if (visibleRepositories.length === 0) {
     return <EmptyFilteredState />;
   }
   if (viewMode === "grid") {
     return (
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {visibleRepositories.map(({ project, repository }) => (
+        {mountedRepositories.map(({ project, repository }) => (
           <div
             className={
               "[contain-intrinsic-size:auto_11rem] [content-visibility:auto]"
