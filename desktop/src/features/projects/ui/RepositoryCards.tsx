@@ -1,3 +1,6 @@
+import * as React from "react";
+
+import { useNow } from "@/shared/lib/useNow";
 import { FolderGit2, Globe, SquareTerminal } from "lucide-react";
 
 import type {
@@ -160,6 +163,9 @@ function RepositoryUpdatedLabel({
   summary,
 }: Pick<RepositoryItemProps, "repository" | "summary">) {
   const updatedAt = summary?.updatedAt || repository.createdAt;
+  // Tick: the parent cards are memoized, so without a clock subscription this
+  // relative label would freeze at its mount-time value indefinitely.
+  useNow(60_000);
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -216,7 +222,11 @@ function RepositoryActionsMenu({
   );
 }
 
-export function RepositoryGridCard(props: RepositoryItemProps) {
+// Memoized: unbounded grids/lists; identity-stable caller props keep
+// re-renders scoped to changed cards.
+export const RepositoryGridCard = React.memo(function RepositoryGridCard(
+  props: RepositoryItemProps,
+) {
   const {
     hasLocal,
     onOpen,
@@ -228,7 +238,7 @@ export function RepositoryGridCard(props: RepositoryItemProps) {
   } = props;
   return (
     <Card
-      className="group relative flex min-h-40 flex-col overflow-hidden border-border/60 bg-transparent shadow-none transition-colors duration-150 hover:bg-muted/20"
+      className="group relative flex h-full min-h-40 flex-col overflow-hidden border-border/60 bg-transparent shadow-none transition-colors duration-150 hover:bg-muted/20"
       data-testid={`repository-card-${repository.dtag}`}
     >
       <RepositoryOpenButton
@@ -278,9 +288,11 @@ export function RepositoryGridCard(props: RepositoryItemProps) {
       </div>
     </Card>
   );
-}
+});
 
-export function RepositoryListRow(props: RepositoryItemProps) {
+export const RepositoryListRow = React.memo(function RepositoryListRow(
+  props: RepositoryItemProps,
+) {
   const {
     hasLocal,
     onOpen,
@@ -332,4 +344,4 @@ export function RepositoryListRow(props: RepositoryItemProps) {
       }
     />
   );
-}
+});

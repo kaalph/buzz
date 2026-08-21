@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type {
   Project,
@@ -15,7 +17,6 @@ import {
 } from "@/features/projects/lib/projectShareLinks";
 import {
   isProjectOwnedByCurrentUser,
-  projectPeople,
   type ProjectsFilter,
   type ProjectsViewMode,
 } from "@/features/projects/lib/projectsViewHelpers";
@@ -63,6 +64,21 @@ export function ProjectsOverviewProjectItems({
   viewMode: ProjectsViewMode;
   visibleProjects: Project[];
 }) {
+  // One selection array shared by every row (was rebuilt per row per render —
+  // O(n²) object churn that also defeated row memoization).
+  const selectionRangeItems = React.useMemo(
+    () =>
+      visibleProjects.map((item) =>
+        selectionItemFromProject({
+          channelId: item.projectChannelId,
+          id: item.id,
+          owner: item.owner,
+          shareLink: projectShareLink(item),
+          title: item.name,
+        }),
+      ),
+    [visibleProjects],
+  );
   if (visibleProjects.length === 0) {
     return <EmptyFilteredState />;
   }
@@ -77,22 +93,27 @@ export function ProjectsOverviewProjectItems({
         {visibleProjects.map((project) => {
           const summary = summaries?.[project.id];
           return (
-            <ProjectGridCard
-              canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
-              deleteDisabled={deleteDisabled}
-              hasLocal={hasLocalCheckout(project, localRepoNames)}
+            <div
+              className={
+                "[contain-intrinsic-size:auto_11rem] [content-visibility:auto]"
+              }
               key={project.id}
-              onDelete={onDelete}
-              onOpen={onOpen}
-              onOpenTerminal={onOpenTerminal}
-              people={projectPeople(project, summary)}
-              profiles={profiles}
-              project={project}
-              repositoryUnavailableReason={repositoryUnavailableReasonFor(
-                project,
-              )}
-              summary={summary}
-            />
+            >
+              <ProjectGridCard
+                canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+                deleteDisabled={deleteDisabled}
+                hasLocal={hasLocalCheckout(project, localRepoNames)}
+                onDelete={onDelete}
+                onOpen={onOpen}
+                onOpenTerminal={onOpenTerminal}
+                profiles={profiles}
+                project={project}
+                repositoryUnavailableReason={repositoryUnavailableReasonFor(
+                  project,
+                )}
+                summary={summary}
+              />
+            </div>
           );
         })}
       </div>
@@ -102,33 +123,29 @@ export function ProjectsOverviewProjectItems({
     <div data-testid="projects-list-container">
       {visibleProjects.map((project) => {
         const summary = summaries?.[project.id];
-        const selectionRangeItems = visibleProjects.map((item) =>
-          selectionItemFromProject({
-            channelId: item.projectChannelId,
-            id: item.id,
-            owner: item.owner,
-            shareLink: projectShareLink(item),
-            title: item.name,
-          }),
-        );
         return (
-          <ProjectListRow
-            canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
-            deleteDisabled={deleteDisabled}
-            hasLocal={hasLocalCheckout(project, localRepoNames)}
+          <div
+            className={
+              "[contain-intrinsic-size:auto_3.5rem] [content-visibility:auto]"
+            }
             key={project.id}
-            onDelete={onDelete}
-            onOpen={onOpen}
-            onOpenTerminal={onOpenTerminal}
-            people={projectPeople(project, summary)}
-            profiles={profiles}
-            project={project}
-            repositoryUnavailableReason={repositoryUnavailableReasonFor(
-              project,
-            )}
-            selectionRangeItems={selectionRangeItems}
-            summary={summary}
-          />
+          >
+            <ProjectListRow
+              canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+              deleteDisabled={deleteDisabled}
+              hasLocal={hasLocalCheckout(project, localRepoNames)}
+              onDelete={onDelete}
+              onOpen={onOpen}
+              onOpenTerminal={onOpenTerminal}
+              profiles={profiles}
+              project={project}
+              repositoryUnavailableReason={repositoryUnavailableReasonFor(
+                project,
+              )}
+              selectionRangeItems={selectionRangeItems}
+              summary={summary}
+            />
+          </div>
         );
       })}
     </div>
@@ -152,6 +169,20 @@ export function ProjectsOverviewRepositoryItems({
   viewMode: ProjectsViewMode;
   visibleRepositories: Array<{ project: Project; repository: Repository }>;
 }) {
+  // Shared, identity-stable selection array (see ProjectsOverviewProjectItems).
+  const selectionRangeItems = React.useMemo(
+    () =>
+      visibleRepositories.map((row) =>
+        selectionItemFromRepository({
+          channelId: row.repository.channelId ?? row.project.projectChannelId,
+          id: row.repository.id,
+          owner: row.repository.owner,
+          shareLink: repositoryShareLink(row.repository),
+          title: row.repository.name,
+        }),
+      ),
+    [visibleRepositories],
+  );
   if (visibleRepositories.length === 0) {
     return <EmptyFilteredState />;
   }
@@ -159,16 +190,22 @@ export function ProjectsOverviewRepositoryItems({
     return (
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {visibleRepositories.map(({ project, repository }) => (
-          <RepositoryGridCard
-            hasLocal={hasLocalRepositoryCheckout(repository, localRepoNames)}
+          <div
+            className={
+              "[contain-intrinsic-size:auto_11rem] [content-visibility:auto]"
+            }
             key={repository.repoAddress}
-            onOpen={onOpen}
-            onOpenTerminal={onOpenTerminal}
-            profiles={profiles}
-            project={project}
-            repository={repository}
-            summary={summaries?.[repository.repoAddress]}
-          />
+          >
+            <RepositoryGridCard
+              hasLocal={hasLocalRepositoryCheckout(repository, localRepoNames)}
+              onOpen={onOpen}
+              onOpenTerminal={onOpenTerminal}
+              profiles={profiles}
+              project={project}
+              repository={repository}
+              summary={summaries?.[repository.repoAddress]}
+            />
+          </div>
         ))}
       </div>
     );
@@ -176,26 +213,23 @@ export function ProjectsOverviewRepositoryItems({
   return (
     <div data-testid="projects-list-container">
       {visibleRepositories.map(({ project, repository }) => (
-        <RepositoryListRow
-          hasLocal={hasLocalRepositoryCheckout(repository, localRepoNames)}
+        <div
+          className={
+            "[contain-intrinsic-size:auto_3.5rem] [content-visibility:auto]"
+          }
           key={repository.repoAddress}
-          onOpen={onOpen}
-          onOpenTerminal={onOpenTerminal}
-          profiles={profiles}
-          project={project}
-          repository={repository}
-          selectionRangeItems={visibleRepositories.map((row) =>
-            selectionItemFromRepository({
-              channelId:
-                row.repository.channelId ?? row.project.projectChannelId,
-              id: row.repository.id,
-              owner: row.repository.owner,
-              shareLink: repositoryShareLink(row.repository),
-              title: row.repository.name,
-            }),
-          )}
-          summary={summaries?.[repository.repoAddress]}
-        />
+        >
+          <RepositoryListRow
+            hasLocal={hasLocalRepositoryCheckout(repository, localRepoNames)}
+            onOpen={onOpen}
+            onOpenTerminal={onOpenTerminal}
+            profiles={profiles}
+            project={project}
+            repository={repository}
+            selectionRangeItems={selectionRangeItems}
+            summary={summaries?.[repository.repoAddress]}
+          />
+        </div>
       ))}
     </div>
   );

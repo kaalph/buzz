@@ -24,6 +24,7 @@ import {
   getProjectUpdatedAt,
   listRowDescription,
   relativeTime,
+  projectPeople,
 } from "@/features/projects/lib/projectsViewHelpers";
 import type { ProjectRepoUnavailableReason } from "@/features/projects/lib/projectRepoAvailability";
 import { projectShareLink } from "@/features/projects/lib/projectShareLinks";
@@ -476,7 +477,6 @@ function ProjectActionsMenu({
 
 type ProjectItemProps = {
   project: Project;
-  people: string[];
   profiles?: UserProfileLookup;
   selectionRangeItems?: ProjectSelectionItem[];
   summary: ProjectActivitySummary | undefined;
@@ -489,9 +489,10 @@ type ProjectItemProps = {
   onOpenTerminal: (project: Project) => Promise<void> | void;
 };
 
-export function ProjectGridCard({
+// Memoized: these cards render in unbounded grids/lists; identity-stable
+// props from the caller keep re-renders scoped to genuinely changed cards.
+export const ProjectGridCard = React.memo(function ProjectGridCard({
   project,
-  people,
   profiles,
   summary,
   repositoryUnavailableReason,
@@ -502,9 +503,13 @@ export function ProjectGridCard({
   onOpen,
   onOpenTerminal,
 }: ProjectItemProps) {
+  const people = React.useMemo(
+    () => projectPeople(project, summary),
+    [project, summary],
+  );
   return (
     <Card
-      className="group relative flex min-h-40 flex-col overflow-hidden border-border/60 bg-transparent shadow-none transition-colors duration-150 hover:bg-muted/20"
+      className="group relative flex h-full min-h-40 flex-col overflow-hidden border-border/60 bg-transparent shadow-none transition-colors duration-150 hover:bg-muted/20"
       data-projects-grid-card
       data-testid={`project-card-${project.dtag}`}
     >
@@ -581,11 +586,10 @@ export function ProjectGridCard({
       </div>
     </Card>
   );
-}
+});
 
-export function ProjectListRow({
+export const ProjectListRow = React.memo(function ProjectListRow({
   project,
-  people,
   profiles,
   selectionRangeItems,
   summary,
@@ -597,6 +601,10 @@ export function ProjectListRow({
   onOpen,
   onOpenTerminal,
 }: ProjectItemProps) {
+  const people = React.useMemo(
+    () => projectPeople(project, summary),
+    [project, summary],
+  );
   const repositoryCount = project.repositoryAddresses.length;
   const selectionItem = selectionItemFromProject({
     channelId: project.projectChannelId,
@@ -656,7 +664,7 @@ export function ProjectListRow({
       }
     />
   );
-}
+});
 
 /** Compact, borderless repository row for the overview side rail. */
 export function ProjectRailRow({
